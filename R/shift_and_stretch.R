@@ -55,42 +55,43 @@ calculate_all_model_comparison_stats <- function(all_data_df,
 
   genes <- unique(shifted_all_data_df$locus_name)
 
-  out.sepAIC <- numeric(length = length(genes))
-  out.combAIC <- numeric(length = length(genes))
   out.sepBIC <- numeric(length = length(genes))
   out.combBIC <- numeric(length = length(genes))
 
   i <- 0
-  cli::cli_progress_step("Calculating registration vs non-registration comparison AIC & BIC ({i}/{length(genes)})", spinner = TRUE)
+  cli::cli_progress_step("Calculating registration vs non-registration comparison BIC ({i}/{length(genes)})", spinner = TRUE)
   for (i in seq_along(genes)) {
     curr_sym <- genes[i]
 
-    L <- compare_registered_to_unregistered_model(
+    BIC_comparison_list <- compare_registered_to_unregistered_model(
       curr_sym,
-      shifted_all_data_df,
+      original_data = all_data_df,
+      data_df = shifted_all_data_df,
       accession_data_to_transform,
       accession_data_ref
     )
 
-    out.sepAIC[i] <- L[["separate.AIC"]]
-    out.combAIC[i] <- L[["combined.AIC"]]
-    out.sepBIC[i] <- L[["separate.BIC"]]
-    out.combBIC[i] <- L[["combined.BIC"]]
+    out.sepBIC[i] <- BIC_comparison_list$separate.BIC
+    out.combBIC[i] <- BIC_comparison_list$combined.BIC
     cli::cli_progress_update(force = TRUE)
   }
 
-  out <- data.table::data.table(
+  model_comparison_dt <- data.table::data.table(
     "gene" = genes,
-    "separate.AIC" = out.sepAIC,
-    "registered.AIC" = out.combAIC,
     "separate.BIC" = out.sepBIC,
     "registered.BIC" = out.combBIC
   )
 
-  return(out)
+  return(model_comparison_dt)
 }
 
 #' Register all expression over time using optimal shift found
+#'
+#' @param data Input data frame containing all replicates of gene expression in each genotype at each time point.
+#' @param best_shifts Data frame of best shift parameters for each gene.
+#' @param accession_data_to_transform Accession name of data which will be transformed.
+#' @param accession_data_ref Accession name of reference data.
+#' @param time_to_add Time to be added when applying shift.
 #'
 #' @noRd
 apply_best_shift <- function(data,
@@ -111,21 +112,13 @@ apply_best_shift <- function(data,
   # Normalise the expression data (If was normalised when calculating the expression data, is recorded in the _compared_mean, and _compared_sd columns. If no normalisation was carried out, then these should have values of 0 and 1. This was done using get_best_shift()).
   transform_was_not_normalised <- all(unique(best_shifts$data_transform_compared_mean) == 0)
   ref_was_not_normalised <- all(unique(best_shifts$data_ref_compared_mean) == 0)
-  # cli::cli_alert_info("T mean: {unique(best_shifts$data_transform_compared_mean)}")
-  # cli::cli_alert_info("R mean: {unique(best_shifts$data_ref_compared_mean)}")
   if (!transform_was_not_normalised | !ref_was_not_normalised) {
-    # cli::cli_alert_info("Applying apply_best_normalisation()...")
-    # cli::cli_alert_info("Expression value {accession_data_to_transform}: {paste(round(processed_data %>% dplyr::filter(accession == accession_data_to_transform) %>% dplyr::pull(expression_value), 1), collapse = ' ')}")
-    # cli::cli_alert_info("Expression value {accession_data_ref}: {paste(round(processed_data %>% dplyr::filter(accession == accession_data_ref) %>% dplyr::pull(expression_value), 1), collapse = ' ')}")
     processed_data <- apply_best_normalisation(
       data = processed_data,
       best_shifts,
       accession_data_to_transform,
       accession_data_ref
     )
-    # cli::cli_alert_info("Applied apply_best_normalisation()")
-    # cli::cli_alert_info("Expression value {accession_data_to_transform}: {paste(round(processed_data %>% dplyr::filter(accession == accession_data_to_transform) %>% dplyr::pull(expression_value), 1), collapse = ' ')}")
-    # cli::cli_alert_info("Expression value {accession_data_ref}: {paste(round(processed_data %>% dplyr::filter(accession == accession_data_ref) %>% dplyr::pull(expression_value), 1), collapse = ' ')}")
   } else {
     # If no scaling carried out DURING the registration step
     cli::cli_alert_warning("No normalisation was carried out DURING registration (though may have been, prior to the comparison)")
@@ -246,12 +239,13 @@ apply_best_normalisation <- function(data,
 #'
 #' @noRd
 compare_registered_to_unregistered_model <- function(curr_sym,
-                                                     all_data_df,
+                                                     original_data,
+                                                     data_df,
                                                      accession_data_to_transform,
                                                      accession_data_ref) {
-  curr_data_df <- all_data_df[all_data_df$locus_name == curr_sym]
+  curr_data_df <- data_df[data_df$locus_name == curr_sym]
 
-  # Flag the timepoints to be used in the modelling, only the ones which overlap!
+  # Flag the time points to be used in the modelling, only the ones which overlap!
   curr_data_df <- get_compared_timepoints(
     curr_data_df,
     accession_data_to_transform,
@@ -259,26 +253,64 @@ compare_registered_to_unregistered_model <- function(curr_sym,
   )
 
   # Cut down to the data for each model
-  data_to_transform_spline <- curr_data_df[curr_data_df$is_compared == TRUE &
-    curr_data_df$accession == accession_data_to_transform, ]
-  data_ref_spline <- curr_data_df[curr_data_df$is_compared == TRUE &
-    curr_data_df$accession == accession_data_ref, ]
+  data_to_transform_spline <- curr_data_df[curr_data_df$is_compared == TRUE & curr_data_df$accession == accession_data_to_transform, ]
+  data_ref_spline <- curr_data_df[curr_data_df$is_compared == TRUE & curr_data_df$accession == accession_data_ref, ]
   combined_spline_data <- curr_data_df[curr_data_df$is_compared == TRUE, ]
+
 
   # Fit the models - fit regression splines.
   # http://www.utstat.utoronto.ca/reid/sta450/feb23.pdf
-  # for cubic spline, K+3 params where K=num.knots
-  # as can omit constant term
+  # For cubic spline, K+3 params where K=num.knots as can omit constant term
   num.spline.params <- 6 # number of parameters for each spline fitting (degree and this used to calculate num knots).
-  # num.spline.params <- 5
   num.registration.params <- 2 # stretch, shift
   num.obs <- nrow(combined_spline_data)
 
-  data_to_transform_fit <- stats::lm(expression_value ~ splines::bs(shifted_time, df = num.spline.params, degree = 3), data = data_to_transform_spline)
-  # message("data_to_transform_fit:", data_to_transform_fit)
-  data_ref_fit <- stats::lm(expression_value ~ splines::bs(shifted_time, df = num.spline.params, degree = 3), data = data_ref_spline)
-  # message("data_ref_fit:", data_ref_fit)
-  combined_fit <- stats::lm(expression_value ~ splines::bs(shifted_time, df = num.spline.params, degree = 3), data = combined_spline_data)
+  data_to_transform_fit <- stats::lm(
+    expression_value ~ splines::bs(shifted_time, df = num.spline.params, degree = 3),
+    data = data_to_transform_spline
+  )
+  data_ref_fit <- stats::lm(
+    expression_value ~ splines::bs(shifted_time, df = num.spline.params, degree = 3),
+    data = data_ref_spline
+  )
+  combined_fit <- stats::lm(
+    expression_value ~ splines::bs(shifted_time, df = num.spline.params, degree = 3),
+    data = combined_spline_data
+  )
+
+  # Additional fit before transformation - using timepoint before registration
+  # Get compared timepoint first:
+  # ref_time <- curr_data_df %>%
+  #   dplyr::filter(is_compared == TRUE, accession == accession_data_ref) %>%
+  #   dplyr::pull(timepoint)
+  #
+  # trans_time <- curr_data_df %>%
+  #   dplyr::filter(is_compared == TRUE, accession == accession_data_to_transform) %>%
+  #   dplyr::pull(timepoint)
+
+  # data_ref_spline_original <- original_data %>%
+  #   dplyr::filter(timepoint %in% ref_time,
+  #                 accession == accession_data_ref)
+  #
+  # data_to_transform_spline_original <- original_data %>%
+  #   dplyr::filter(timepoint %in% trans_time,
+  #                 accession == accession_data_to_transform)
+
+  # data_ref_spline_original <- original_data %>%
+  #   dplyr::filter(accession == accession_data_ref)
+  #
+  # data_to_transform_spline_original <- original_data %>%
+  #   dplyr::filter(accession == accession_data_to_transform)
+  #
+  # data_ref_fit_before_reg <- stats::lm(
+  #   expression_value ~ splines::bs(timepoint, df = num.spline.params, degree = 3),
+  #   data = data_ref_spline_original
+  # )
+  #
+  # data_to_transform_before_reg <- stats::lm(
+  #   expression_value ~ splines::bs(timepoint, df = num.spline.params, degree = 3),
+  #   data = data_to_transform_spline_original
+  # )
 
   # Calculate the log likelihoods
   data_to_transform_logLik <- stats::logLik(data_to_transform_fit)
@@ -286,17 +318,20 @@ compare_registered_to_unregistered_model <- function(curr_sym,
   separate_logLik <- data_to_transform_logLik + data_ref_logLik # logLikelihoods, so sum
   combined_logLik <- stats::logLik(combined_fit)
 
-  # Calculate the comparison.stats - - AIC, BIC, smaller is better!
+  # Additional fit before transformation
+  # data_to_transform_logLik_before_reg <- stats::logLik(data_to_transform_before_reg)
+  # data_ref_logLik_before_reg <- stats::logLik(data_ref_fit_before_reg)
+  # separate_logLik_before_reg <- data_to_transform_logLik_before_reg + data_ref_logLik_before_reg
+
+
+  # Calculate the comparison.stats BIC: smaller is better!
   # 2*num.spline.params as fitting separate models for Ara * Col
-  separate.AIC <- calc_AIC(separate_logLik, 2 * num.spline.params)
-  combined.AIC <- calc_AIC(combined_logLik, num.spline.params + num.registration.params)
   separate.BIC <- calc_BIC(separate_logLik, 2 * num.spline.params, num.obs)
   combined.BIC <- calc_BIC(combined_logLik, num.spline.params + num.registration.params, num.obs)
+  # separate.BIC.before <- calc_BIC(separate_logLik_before_reg, 2 * num.spline.params, nrow(original_data))
 
   # Results object
   results_list <- list(
-    separate.AIC = separate.AIC,
-    combined.AIC = combined.AIC,
     separate.BIC = separate.BIC,
     combined.BIC = combined.BIC
   )

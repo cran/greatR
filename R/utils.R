@@ -19,6 +19,16 @@ get_compared_timepoints <- function(data,
   data$is_compared <- FALSE
   data$is_compared[(data$accession == accession_data_to_transform & (data$shifted_time >= min_data_ref & data$shifted_time <= max_data_ref))] <- TRUE
 
+  # Make sure the time points can be compared using user-specified parameters
+  if (nrow(data[data$is_compared == TRUE, ]) == 0) {
+    stop(
+      cli::format_error(c(
+        "No comparable timepoints were found using specified parameters.",
+        "i" = "Try using smaller parameter ranges, or specifying {.var maintain_min_num_overlapping_points = TRUE}."
+      ))
+    )
+  }
+
   # Get the extreme reference data times which used - bigger or equal than max of data to transform, and smaller or equal than  min data to transform, because have to project data to transform onto reference data
   max_data_to_transform <- max(data$shifted_time[data$accession == accession_data_to_transform & data$is_compared == TRUE])
   min_data_to_transform <- min(data$shifted_time[data$accession == accession_data_to_transform & data$is_compared == TRUE])
@@ -82,7 +92,7 @@ match_names <- function(x, lookup) {
 #' @description
 #' `get_approximate_stretch()` is a function to get a stretch factor estimation given input data. This function will take the time point ranges of both reference and query data and compare them to estimate the stretch factor.
 #'
-#' @param input_df Input data frame contains all replicates of gene expression in each genotype at each time point.
+#' @param input_df Input data frame containing all replicates of gene expression in each genotype at each time point.
 #' @param accession_data_to_transform Accession name of data which will be transformed.
 #' @param accession_data_ref Accession name of reference data.
 #'
@@ -91,6 +101,15 @@ match_names <- function(x, lookup) {
 get_approximate_stretch <- function(input_df, accession_data_to_transform, accession_data_ref) {
   # Suppress "no visible binding for global variable" note
   accession <- NULL
+
+  # Check that input accessions exist in the input data
+  list_of_accessions <- unique(input_df$accession)
+  if (!(accession_data_to_transform %in% list_of_accessions) | !(accession_data_ref %in% list_of_accessions)) {
+    stop(cli::format_error(c(
+      "{.var accession_data_to_transform} and {.var accession_data_ref} can only be {.val {cli::cli_vec(list_of_accessions, style = list(vec_sep = ', ', vec_last = ' or '))}}.",
+      "x" = "You supplied {.val {accession_data_to_transform}} and {.val {accession_data_ref}}."
+    )))
+  }
 
   # Calculate approximate stretch factor
   deltas <- input_df %>%

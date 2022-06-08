@@ -4,7 +4,7 @@ knitr::opts_chunk$set(
   comment = "#>"
 )
 
-## ----vis-reg-data, echo=FALSE, out.width='80%'--------------------------------
+## ----vis-reg-data, echo=FALSE, fig.align='center', out.width='80%'------------
 knitr::include_graphics("figures/visualisation_process.png")
 
 ## ----example, message=FALSE, include=FALSE------------------------------------
@@ -20,8 +20,7 @@ all_data_df <- system.file("extdata/brapa_arabidopsis_all_replicates.csv", packa
 registration_results <- scale_and_register_data(
   input_df = all_data_df,
   stretches = c(3, 2.5, 2, 1.5, 1),
-  shift_extreme = 4,
-  num_shifts = 33,
+  shifts = seq(-4, 4, length.out = 33),
   min_num_overlapping_points = 4,
   initial_rescale = FALSE,
   do_rescale = TRUE,
@@ -40,14 +39,14 @@ all_summary$df_summary %>%
 ## ----print-accession-of-registred-genes---------------------------------------
 all_summary$registered_genes
 
-## ----plot-results, fig.height=10, fig.width=10, warning=FALSE-----------------
+## ----plot-results, fig.align='center', fig.height=10, fig.width=10, warning=FALSE----
 # Plot registration result
 plot_registration_results(
   registration_results$imputed_mean_df,
   ncol = 3
 )
 
-## ----plot-results-with-label, fig.height=10, fig.width=10, warning=FALSE------
+## ----plot-results-with-label, fig.align='center', fig.height=10, fig.width=10, warning=FALSE----
 # Plot registration result
 plot_registration_results(
   registration_results$imputed_mean_df,
@@ -58,21 +57,19 @@ plot_registration_results(
 
 ## ----get-sample-distance------------------------------------------------------
 sample_distance <- calculate_between_sample_distance(
-  registration_results$mean_df,
-  registration_results$mean_df_sc,
-  registration_results$imputed_mean_df,
+  registration_results,
   accession_data_ref = "Ro18"
 )
 
-## ----plot-dist-mean-df, fig.height=5, fig.width=5, warning=FALSE--------------
+## ----plot-dist-mean-df, fig.align='center', fig.height=5, fig.width=5, warning=FALSE----
 # Plot heatmap of mean expression profiles distance before scaling
 plot_heatmap(sample_distance$distance_mean_df)
 
-## ----plot-dist-scaled-mean-df, fig.height=5, fig.width=5, warning=FALSE-------
+## ----plot-dist-scaled-mean-df, fig.align='center', fig.height=5, fig.width=5, warning=FALSE----
 # Plot heatmap of mean expression profiles distance after scaling
 plot_heatmap(sample_distance$distance_scaled_mean_df)
 
-## ----plot-dist-registered, fig.height=5, fig.width=5, warning=FALSE-----------
+## ----plot-dist-registered, fig.align='center', fig.height=5, fig.width=5, warning=FALSE----
 # Plot heatmap of mean expression profiles distance after registration process
 plot_heatmap(
   sample_distance$distance_registered_df_only_reg, 

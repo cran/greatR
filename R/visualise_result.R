@@ -114,7 +114,7 @@ plot_registration_results <- function(reg_result_df, model_comparison_df = NULL,
 #' @description
 #' Function `plot_heatmap()` allows users to plot distances between samples from different time points to investigate the similarity of progression of gene expression states between species before or after registration.
 #'
-#' @param sample_dist_df Input data frame contains sample distance between two different species.
+#' @param sample_dist_df Input data frame containing sample distance between two different species.
 #' @param title Optional plot title.
 #' @param axis_fontsize Font size of X and Y axes labels.
 #' @param same_min_timepoint If \code{FALSE}, the default, will not take data with the same minimum time point.
@@ -124,12 +124,11 @@ plot_registration_results <- function(reg_result_df, model_comparison_df = NULL,
 #' @importFrom rlang .data
 #' @export
 plot_heatmap <- function(sample_dist_df, title = NULL, axis_fontsize = NULL, same_min_timepoint = FALSE, same_max_timepoint = FALSE) {
-
   # Define timepoint x and y
   sample_dist_df <- sample_dist_df %>%
     dplyr::mutate(
-      timepoint_x = as.numeric(stringr::str_extract(.data$x_sample, "(?<=-)\\d+")),
-      timepoint_y = as.numeric(stringr::str_extract(.data$y_sample, "(?<=-)\\d+"))
+      timepoint_x = as.numeric(stringr::str_extract(.data$x_sample, "(?<=-)\\d+$")),
+      timepoint_y = as.numeric(stringr::str_extract(.data$y_sample, "(?<=-)\\d+$"))
     )
 
   # Take data with the same minimum time points
@@ -148,10 +147,22 @@ plot_heatmap <- function(sample_dist_df, title = NULL, axis_fontsize = NULL, sam
       )
   }
 
-  # Change class of x_sample and y_sample as factor
-  sample_dist_df$x_sample <- factor(sample_dist_df$x_sample, levels = unique(sort(sample_dist_df$x_sample)))
-  sample_dist_df$y_sample <- factor(sample_dist_df$y_sample, levels = unique(sort(sample_dist_df$y_sample)))
+  # Manually create timepoint sorting levels for x_sample and y_sample columns
+  x_sample_sorted_levels <- paste(
+    unique(stringr::str_remove_all(sample_dist_df$x_sample, "-\\d+$")),
+    unique(sort(sample_dist_df$timepoint_x)),
+    sep = "-"
+  )
 
+  y_sample_sorted_levels <- paste(
+    unique(stringr::str_remove_all(sample_dist_df$y_sample, "-\\d+$")),
+    unique(sort(sample_dist_df$timepoint_y)),
+    sep = "-"
+  )
+
+  # Change class of x_sample and y_sample as factor
+  sample_dist_df$x_sample <- factor(sample_dist_df$x_sample, levels = x_sample_sorted_levels)
+  sample_dist_df$y_sample <- factor(sample_dist_df$y_sample, levels = y_sample_sorted_levels)
 
   p <- ggplot2::ggplot(sample_dist_df) +
     ggplot2::aes(
@@ -175,7 +186,7 @@ plot_heatmap <- function(sample_dist_df, title = NULL, axis_fontsize = NULL, sam
     ggplot2::guides(
       fill = ggplot2::guide_colorbar(label.position = "top")
     ) +
-    viridis::scale_fill_viridis() +
+    ggplot2::scale_fill_viridis_c() +
     ggplot2::labs(
       title = title,
       x = "",

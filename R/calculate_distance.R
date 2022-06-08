@@ -1,8 +1,6 @@
 #' Calculate distance between sample data before and after registration
 #'
-#' @param mean_df Input data frame contains the mean gene expression of each gene in each genotype at each time point.
-#' @param mean_df_sc Input data frame which is identical to `mean_df`, with additional column `sc.expression_value` which is scaled of expression values.
-#' @param imputed_mean_df Input data frame contains registered.
+#' @param registration_results Result of registration process using \code{\link{scale_and_register_data}}.
 #' @param gene_col Column name of gene accession, default is \code{locus_name}.
 #' @param compare_ref_vs_transform If \code{TRUE}, the default, only comparison between reference data and data to transform is considered.
 #' @param accession_data_ref Accession name of reference data.
@@ -16,12 +14,15 @@
 #' \item{distance_registered_df_only_reg}{distance of registered & scaled mean expression (only registered genes).}
 #'
 #' @export
-calculate_between_sample_distance <- function(mean_df,
-                                              mean_df_sc,
-                                              imputed_mean_df,
+calculate_between_sample_distance <- function(registration_results,
                                               gene_col = "locus_name",
                                               compare_ref_vs_transform = TRUE,
                                               accession_data_ref) {
+  # Parse registration_results list
+  mean_df <- registration_results$mean_df
+  mean_df_sc <- registration_results$mean_df_sc
+  imputed_mean_df <- registration_results$imputed_mean_df
+
   # Convert all to wide format ready for distance calculation
   # mean_df
   mean.dt.w <- reformat_for_distance_calculation(
@@ -116,6 +117,7 @@ calculate_between_sample_distance <- function(mean_df,
   attr(D.scaled.registered.genes, "title") <- "scaled mean expression (only registered genes)"
   attr(D.registered.registered.genes, "title") <- "registered & scaled mean expression (only registered genes)"
 
+  # Results object
   results_list <- list(
     "distance_mean_df" = D.mean,
     "distance_scaled_mean_df" = D.scaled,
@@ -139,12 +141,6 @@ reformat_for_distance_calculation <- function(dt, sample_id_cols, gene_col, expr
   dt$sample.id <- dt[[sample_id_cols[1]]]
   if (length(sample_id_cols) > 1) {
     for (i in 2:length(sample_id_cols)) {
-
-      # Pad timepoint to 2 figures to help ordering
-      if (class(dt[[sample_id_cols[i]]]) %in% c("integer", "numeric")) {
-        dt[[sample_id_cols[i]]] <- stringr::str_pad(dt[[sample_id_cols[i]]], 2, pad = "0")
-      }
-
       dt$sample.id <- paste0(dt[["sample.id"]], "-", dt[[sample_id_cols[i]]])
     }
   }

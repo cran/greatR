@@ -6,29 +6,31 @@
 \usage{
 scale_and_register_data(
   input_df,
-  stretches,
-  shift_extreme,
-  num_shifts,
+  stretches = NA,
+  shifts = NA,
   min_num_overlapping_points,
-  initial_rescale,
-  do_rescale,
+  maintain_min_num_overlapping_points = FALSE,
+  initial_rescale = FALSE,
+  do_rescale = TRUE,
   accession_data_to_transform,
   accession_data_ref,
   start_timepoint = c("reference", "transform", "zero"),
   expression_value_threshold = 5,
-  is_data_normalised = FALSE
+  is_data_normalised = FALSE,
+  optimise_registration_parameters = FALSE,
+  num_iterations = 60
 )
 }
 \arguments{
-\item{input_df}{Input data frame contains all replicates of gene expression in each genotype at each time point.}
+\item{input_df}{Input data frame containing all replicates of gene expression in each genotype at each time point.}
 
 \item{stretches}{Candidate registration stretch factors to apply to data to transform.}
 
-\item{shift_extreme}{The absolute maximum value which can be applied as a shift to gene expression time course (days).}
+\item{shifts}{Candidate registration shift values to apply to data to transform.}
 
-\item{num_shifts}{Number of shifts between minimum and maximum values of shift.}
+\item{min_num_overlapping_points}{Number of minimum overlapping time points. Shifts will be only considered if it leaves at least these many overlapping points after applying the registration function.}
 
-\item{min_num_overlapping_points}{Number of minimum overlapping time points.  Shifts will be only considered if it leaves at least these many overlapping points after applying the registration function.}
+\item{maintain_min_num_overlapping_points}{Whether to automatically calculate extreme (minimum and maximum) values of \code{shifts} to maintain specified \code{min_num_overlapping_points} condition. By default, \code{FALSE}.}
 
 \item{initial_rescale}{Scaling gene expression prior to registration if \code{TRUE}.}
 
@@ -42,7 +44,11 @@ scale_and_register_data(
 
 \item{expression_value_threshold}{Expression value threshold. Remove expressions if maximum is less than the threshold. If \code{NULL} keep all data.}
 
-\item{is_data_normalised}{TRUE if dataset has been normalised prior to registration process.}
+\item{is_data_normalised}{\code{TRUE} if dataset has been normalised prior to registration process.}
+
+\item{optimise_registration_parameters}{Whether to optimise registration parameters with Simulated Annealing. By default, \code{FALSE}.}
+
+\item{num_iterations}{Maximum number of iterations in the Simulated Annealing optimisation. By default, 60.}
 }
 \value{
 This function returns a list of data frames, containing:
@@ -50,6 +56,7 @@ This function returns a list of data frames, containing:
 \item{mean_df}{a data frame containing mean expression value of each gene and accession for every time point.}
 \item{mean_df_sc}{identical to \code{mean_df}, with additional column \code{sc.expression_value} which the scaled mean expression values.}
 \item{to_shift_df}{a processed input data frame which is ready to be registered.}
+\item{best_shifts}{a data frame containing best shift factor for each given stretch.}
 \item{shifted_mean_df}{the registration result - after stretching and shifting.}
 \item{imputed_mean_df}{the imputed (transformed to be the same in a set of common time points) registration result.}
 \item{all_shifts_df}{a table containing candidates of registration parameters and a score after applying each parameter (stretch and shift factor).}
@@ -68,8 +75,7 @@ all_data_df <- system.file("extdata/brapa_arabidopsis_all_replicates.csv", packa
 registration_results <- scale_and_register_data(
   input_df = all_data_df,
   stretches = c(3, 2.5, 2, 1.5, 1),
-  shift_extreme = 4,
-  num_shifts = 27,
+  shifts = seq(-4, 4, length.out = 33),
   min_num_overlapping_points = 4,
   initial_rescale = FALSE,
   do_rescale = TRUE,

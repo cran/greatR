@@ -16,9 +16,7 @@ knitr::opts_chunk$set(
 
 After running registration function `scale_and_register_data()` as shown in the [registering data](https://ruthkr.github.io/greatR/articles/register-data.html) article, users can summarise and visualise the results as illustrated in the figure below.
 
-<br>
-
-```{r vis-reg-data, echo=FALSE, out.width='80%'}
+```{r vis-reg-data, echo=FALSE, fig.align='center', out.width='80%'}
 knitr::include_graphics("figures/visualisation_process.png")
 ```
 
@@ -42,8 +40,7 @@ all_data_df <- system.file("extdata/brapa_arabidopsis_all_replicates.csv", packa
 registration_results <- scale_and_register_data(
   input_df = all_data_df,
   stretches = c(3, 2.5, 2, 1.5, 1),
-  shift_extreme = 4,
-  num_shifts = 33,
+  shifts = seq(-4, 4, length.out = 33),
   min_num_overlapping_points = 4,
   initial_rescale = FALSE,
   do_rescale = TRUE,
@@ -77,7 +74,7 @@ all_summary$registered_genes
 
 Function `plot_registration_results()` allows users to plot registration results of the genes of interest. 
 
-```{r plot-results, fig.height=10, fig.width=10, warning=FALSE}
+```{r plot-results, fig.align='center', fig.height=10, fig.width=10, warning=FALSE}
 # Plot registration result
 plot_registration_results(
   registration_results$imputed_mean_df,
@@ -86,7 +83,7 @@ plot_registration_results(
 ```
 Users also have an option to include information or label on the plot whether particular genes are registered or not, as well as the registration parameters by include model comparison data frame as shown below. 
 
-```{r plot-results-with-label, fig.height=10, fig.width=10, warning=FALSE}
+```{r plot-results-with-label, fig.align='center', fig.height=10, fig.width=10, warning=FALSE}
 # Plot registration result
 plot_registration_results(
   registration_results$imputed_mean_df,
@@ -106,9 +103,7 @@ After registering the sample data, users can compare the overall similarity befo
 
 ```{r get-sample-distance}
 sample_distance <- calculate_between_sample_distance(
-  registration_results$mean_df,
-  registration_results$mean_df_sc,
-  registration_results$imputed_mean_df,
+  registration_results,
   accession_data_ref = "Ro18"
 )
 ```
@@ -127,17 +122,17 @@ Function `calculate_between_sample_distance()` returns a list of seven data fram
 
 Each of these data frames above can be visualised using function `plot_heatmap()`. 
 
-```{r plot-dist-mean-df, fig.height=5, fig.width=5, warning=FALSE}
+```{r plot-dist-mean-df, fig.align='center', fig.height=5, fig.width=5, warning=FALSE}
 # Plot heatmap of mean expression profiles distance before scaling
 plot_heatmap(sample_distance$distance_mean_df)
 ```
 
-```{r plot-dist-scaled-mean-df, fig.height=5, fig.width=5, warning=FALSE}
+```{r plot-dist-scaled-mean-df, fig.align='center', fig.height=5, fig.width=5, warning=FALSE}
 # Plot heatmap of mean expression profiles distance after scaling
 plot_heatmap(sample_distance$distance_scaled_mean_df)
 ```
 
-```{r plot-dist-registered, fig.height=5, fig.width=5, warning=FALSE}
+```{r plot-dist-registered, fig.align='center', fig.height=5, fig.width=5, warning=FALSE}
 # Plot heatmap of mean expression profiles distance after registration process
 plot_heatmap(
   sample_distance$distance_registered_df_only_reg, 

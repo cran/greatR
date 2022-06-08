@@ -4,10 +4,10 @@ knitr::opts_chunk$set(
   comment = "#>"
 )
 
-## ----all-data-illustration, echo=FALSE, out.width='80%'-----------------------
+## ----all-data-illustration, echo=FALSE, fig.align='center', out.width='80%'----
 knitr::include_graphics("figures/all_data_illustration.jpg")
 
-## ----combine-data, echo=FALSE, out.width='100%'-------------------------------
+## ----combine-data, echo=FALSE, fig.align='center', out.width='100%'-----------
 knitr::include_graphics("figures/prepare_data.png")
 
 ## ----example, message=FALSE---------------------------------------------------
