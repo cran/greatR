@@ -4,76 +4,54 @@ knitr::opts_chunk$set(
   comment = "#>"
 )
 
-## ----vis-reg-data, echo=FALSE, fig.align='center', out.width='80%'------------
+## ----vis-reg-data, echo=FALSE, fig.align='center', out.width='90%'------------
 knitr::include_graphics("figures/visualisation_process.png")
 
-## ----example, message=FALSE, include=FALSE------------------------------------
+## ----load-greatR, message=FALSE, include=FALSE--------------------------------
 # Load the package
 library(greatR)
-library(dplyr)
+library(data.table)
 
-## ----register-data, message=FALSE, warning=FALSE, include=FALSE---------------
-all_data_df <- system.file("extdata/brapa_arabidopsis_all_replicates.csv", package = "greatR") %>%
-  utils::read.csv()
-
-# Running the registration
-registration_results <- scale_and_register_data(
-  input_df = all_data_df,
-  stretches = c(3, 2.5, 2, 1.5, 1),
-  shifts = seq(-4, 4, length.out = 33),
-  min_num_overlapping_points = 4,
-  initial_rescale = FALSE,
-  do_rescale = TRUE,
-  accession_data_to_transform = "Col0",
-  accession_data_ref = "Ro18",
-  start_timepoint = "reference"
-)
+## ----brapa-data-results, message=FALSE, warning=FALSE, include=FALSE----------
+# Load a data frame from the sample data
+registration_results <- system.file("extdata/brapa_arabidopsis_registration.rds", package = "greatR") |>
+  readRDS()
 
 ## ----get-summary-results------------------------------------------------------
-# Get all of summary
-all_summary <- summary_model_comparison(registration_results$model_comparison_df)
+# Get registration summary
+reg_summary <- summarise_registration(registration_results)
 
-all_summary$df_summary %>%
+reg_summary$summary |>
   knitr::kable()
 
-## ----print-accession-of-registred-genes---------------------------------------
-all_summary$registered_genes
+## ----print-accession-of-registered-genes--------------------------------------
+reg_summary$registered_genes
 
-## ----plot-results, fig.align='center', fig.height=10, fig.width=10, warning=FALSE----
+## ----print-accession-of-non-registered-genes----------------------------------
+reg_summary$non_registered_genes
+
+## ----plot-results, fig.align='center', fig.height=8, fig.width=7, warning=FALSE----
 # Plot registration result
 plot_registration_results(
-  registration_results$imputed_mean_df,
-  ncol = 3
-)
-
-## ----plot-results-with-label, fig.align='center', fig.height=10, fig.width=10, warning=FALSE----
-# Plot registration result
-plot_registration_results(
-  registration_results$imputed_mean_df,
-  registration_results$model_comparison_df,
-  ncol = 3,
-  sync_timepoints = TRUE
+  registration_results,
+  ncol = 2
 )
 
 ## ----get-sample-distance------------------------------------------------------
-sample_distance <- calculate_between_sample_distance(
-  registration_results,
-  accession_data_ref = "Ro18"
+sample_distance <- calculate_distance(registration_results)
+
+## ----plot-dist-original, fig.align='center', fig.height=5, fig.width=5, warning=FALSE----
+# Plot heatmap of mean expression profiles distance before registration process
+plot_heatmap(
+  sample_distance,
+  type = "original"
 )
-
-## ----plot-dist-mean-df, fig.align='center', fig.height=5, fig.width=5, warning=FALSE----
-# Plot heatmap of mean expression profiles distance before scaling
-plot_heatmap(sample_distance$distance_mean_df)
-
-## ----plot-dist-scaled-mean-df, fig.align='center', fig.height=5, fig.width=5, warning=FALSE----
-# Plot heatmap of mean expression profiles distance after scaling
-plot_heatmap(sample_distance$distance_scaled_mean_df)
 
 ## ----plot-dist-registered, fig.align='center', fig.height=5, fig.width=5, warning=FALSE----
 # Plot heatmap of mean expression profiles distance after registration process
 plot_heatmap(
-  sample_distance$distance_registered_df_only_reg, 
-  same_max_timepoint = TRUE, 
-  same_min_timepoint = TRUE
+  sample_distance,
+  type = "registered",
+  match_timepoints = TRUE
 )
 

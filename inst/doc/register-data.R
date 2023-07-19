@@ -4,94 +4,49 @@ knitr::opts_chunk$set(
   comment = "#>"
 )
 
-## ----reg-data, echo=FALSE, fig.align='center', out.width='50%'----------------
-knitr::include_graphics("figures/registration_process.png")
+## ----reg-data, echo=FALSE, fig.align='center', out.width='20%'----------------
+knitr::include_graphics("figures/01_registration_opt_default.png")
 
-## ----example, message=FALSE---------------------------------------------------
+## ----load-greatR, message=FALSE-----------------------------------------------
 # Load the package
 library(greatR)
-library(dplyr)
+library(data.table)
 
-## ----all-data, message=FALSE, warning=FALSE-----------------------------------
-# Gene expression data with replicates
-all_data_df <- system.file("extdata/brapa_arabidopsis_all_replicates.csv", package = "greatR") %>%
-  utils::read.csv()
+## ----brapa-data, message=FALSE, warning=FALSE---------------------------------
+# Load a data frame from the sample data
+b_rapa_data <- system.file("extdata/brapa_arabidopsis_all_replicates.csv", package = "greatR") |>
+  data.table::fread()
 
-## ----all-data-kable-----------------------------------------------------------
-all_data_df %>%
-  dplyr::group_by(accession) %>%
-  dplyr::slice(1:6) %>%
+## ----brapa-data-kable-clean, eval=FALSE---------------------------------------
+#  b_rapa_data[, .SD[1:6], by = accession] |>
+#    knitr::kable()
+
+## ----brapa-data-kable, echo=FALSE---------------------------------------------
+b_rapa_data[, .SD[1:6], by = accession][, .(gene_id, accession, timepoint, expression_value, replicate)] |>
   knitr::kable()
 
-## ----estimate-stretch-factors, message=FALSE, warning=FALSE, eval=FALSE-------
-#  get_approximate_stretch(
-#    input_df = all_data_df,
-#    accession_data_to_transform = "Col0",
-#    accession_data_ref = "Ro18"
+## ----register-data-raw, message=FALSE, warning=FALSE, eval=FALSE--------------
+#  registration_results <- register(
+#    b_rapa_data,
+#    reference = "Ro18",
+#    query = "Col0"
 #  )
-#  #> [1] 2.666667
+#  #> ── Validating input data ────────────────────────────────────────────────────────
+#  #> ℹ Will process 10 genes.
+#  #>
+#  #> ── Starting registration with optimisation ──────────────────────────────────────
+#  #> ℹ Using Nelder-Mead method.
+#  #> ℹ Using computed stretches and shifts search space limits.
+#  #> ✔ Optimising registration parameters for genes (10/10) [2.3s]
 
-## ----register-data, message=FALSE, warning=FALSE------------------------------
-# Running the registration
-registration_results <- scale_and_register_data(
-  input_df = all_data_df,
-  stretches = c(3, 2.5, 2, 1.5, 1),
-  shifts = seq(-4, 4, length.out = 33),
-  min_num_overlapping_points = 4,
-  initial_rescale = FALSE,
-  do_rescale = TRUE,
-  accession_data_to_transform = "Col0",
-  accession_data_ref = "Ro18",
-  start_timepoint = "reference"
-)
-#> 
-#> ── Information before registration ─────────────────────────────────────────────
-#> ℹ Max value of expression_value of all_data_df: 262.28
-#> 
-#> ── Analysing models for all stretch and shift factor ───────────────────────────
-#> 
-#> ── Analysing models for stretch factor = 3 ──
-#> ✓ Calculating score for all shifts (10/10) [2.6s]
-#> ✓ Normalising expression by mean and sd of compared values (10/10) [85ms]
-#> ✓ Applying best shift (10/10) [91ms]
-#> ✓ Calculating registration vs non-registration comparison BIC (10/10) [140ms]
-#> ✓ Finished analysing models for stretch factor = 3
-#> 
-#> ── Analysing models for stretch factor = 2.5 ──
-#> ✓ Calculating score for all shifts (10/10) [2.8s]
-#> ✓ Normalising expression by mean and sd of compared values (10/10) [81ms]
-#> ✓ Applying best shift (10/10) [103ms]
-#> ✓ Calculating registration vs non-registration comparison BIC (10/10) [160ms]
-#> ✓ Finished analysing models for stretch factor = 2.5
-#> 
-#> ── Analysing models for stretch factor = 2 ──
-#> ✓ Calculating score for all shifts (10/10) [2.9s]
-#> ✓ Normalising expression by mean and sd of compared values (10/10) [95ms]
-#> ✓ Applying best shift (10/10) [82ms]
-#> ✓ Calculating registration vs non-registration comparison BIC (10/10) [164ms]
-#> ✓ Finished analysing models for stretch factor = 2
-#> 
-#> ── Analysing models for stretch factor = 1.5 ──
-#> ✓ Calculating score for all shifts (10/10) [3s]
-#> ✓ Normalising expression by mean and sd of compared values (10/10) [107ms]
-#> ✓ Applying best shift (10/10) [84ms]
-#> ✓ Calculating registration vs non-registration comparison BIC (10/10) [171ms]
-#> ✓ Finished analysing models for stretch factor = 1.5
-#> 
-#> ── Analysing models for stretch factor = 1 ──
-#> ✓ Calculating score for all shifts (10/10) [2.7s]
-#> ✓ Normalising expression by mean and sd of compared values (10/10) [85ms]
-#> ✓ Applying best shift (10/10) [90ms]
-#> ✓ Calculating registration vs non-registration comparison BIC (10/10) [154ms]
-#> ✓ Finished analysing models for stretch factor = 1
-#> 
-#> ── Model comparison results ────────────────────────────────────────────────────
-#> ℹ BIC finds registration better than non-registration for: 10/10
-#> 
-#> ── Applying the best-shifts and stretches to gene expression ───────────────────
-#> ✓ Normalising expression by mean and sd of compared values (10/10) [85ms]
-#> ✓ Applying best shift (10/10) [98ms]
-#> ℹ Max value of expression_value: 9.05
-#> ✓ Imputing transformed expression values (10/10) [209ms]
-#> 
+## ----register-data, message=FALSE, warning=FALSE, include=FALSE---------------
+# Load a data frame from the sample data
+registration_results <- system.file("extdata/brapa_arabidopsis_registration.rds", package = "greatR") |>
+  readRDS()
+
+registration_results$model_comparison <- registration_results$model_comparison[, .(gene_id, stretch, shift, BIC_separate, BIC_combined, registered)]
+
+## ----get-model-summary-data, warning=FALSE------------------------------------
+registration_results$model_comparison |>
+  knitr::kable()
 

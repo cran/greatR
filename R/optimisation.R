@@ -1,248 +1,92 @@
-#' Calculate best shifts and stretches for each gene, also calculate BIC under registration or non-registration
+#' Optimise registration parameters with Simulated Annealing
 #'
-#' Simplified version of \code{\link{get_best_stretch_and_shift}} for \code{\link{optimise_registration_params}}.
+#' @param data Input data frame containing all replicates of gene expression for a single genotype at each time point.
+#' @param overlapping_percent Number of minimum overlapping time points. Shifts will be only considered if it leaves at least these many overlapping points after applying the registration function.
+#' @param optimisation_config List with arguments to modify the optimisation configuration.
+#' @param optimise_fun Optimisation function to use. Can be \code{optimise_using_nm} or \code{optimise_using_nm}.
 #'
 #' @noRd
-get_best_stretch_and_shift_simplified <- function(to_shift_df,
-                                                  all_data_df,
-                                                  stretches,
-                                                  shifts,
-                                                  do_rescale,
-                                                  min_num_overlapping_points,
-                                                  maintain_min_num_overlapping_points,
-                                                  accession_data_to_transform,
-                                                  accession_data_ref,
-                                                  time_to_add) {
-  # Warning to make sure users have correct accession data
-  if (!(accession_data_to_transform %in% all_data_df$accession & accession_data_ref %in% all_data_df$accession)) {
-    stop("get_best_stretch_and_shift(): data accessions should have been converted to correct accession.")
+optimise <- function(data,
+                     stretches = NA,
+                     shifts = NA,
+                     overlapping_percent = 0.5,
+                     optimisation_config,
+                     optimise_fun) {
+  # Calculate boundary box and initial guess
+  if (all(is.na(stretches), is.na(shifts))) {
+    space_lims <- get_search_space_limits(data, overlapping_percent)
+  } else {
+    space_lims <- get_search_space_limits_from_params(stretches, shifts)
   }
 
-  # Calculate all the shift scores given this stretch. Score is mean(dist^2), over overlapping points if do_rescale=T, is rescaled by the mean FOR THE OVERLAPPING POINTS. (but not by the SD.)
-  all_shifts <- calculate_all_best_shifts(
-    mean_df = to_shift_df,
-    stretch_factor = stretches,
-    shifts,
-    do_rescale,
-    min_num_overlapping_points,
-    maintain_min_num_overlapping_points,
-    accession_data_to_transform,
-    accession_data_ref
+  # Run optimisation
+  optimised_params <- optimise_fun(
+    data,
+    optimisation_config,
+    overlapping_percent,
+    space_lims
   )
 
-  # Ensure no duplicated rows
-  all_shifts <- unique(all_shifts)
-
-  # Calculate the BIC for the best shifts found with this stretch.compared to treating the gene's expression separately in data to transform and reference data
-  model_comparison_dt <- calculate_all_model_comparison_stats(
-    all_data_df,
-    all_shifts,
-    accession_data_to_transform,
-    accession_data_ref,
-    time_to_add
-  )
-
-  # Results object
-  results_list <- list(
-    model_comparison_dt = model_comparison_dt
-  )
-
-  return(results_list)
+  return(optimised_params)
 }
 
-
-#' Get BIC score from registering data
-#'
-#' Simplified version of \code{\link{scale_and_register_data}} for \code{\link{optimise_registration_params}}.
+#' Objective loss function for Simulated Annealing
 #'
 #' @noRd
-get_BIC_from_registering_data <- function(input_df,
-                                          stretches,
-                                          shifts,
-                                          min_num_overlapping_points,
-                                          maintain_min_num_overlapping_points = FALSE,
-                                          initial_rescale,
-                                          do_rescale,
-                                          accession_data_to_transform,
-                                          accession_data_ref,
-                                          start_timepoint = c("reference", "transform", "zero"),
-                                          expression_value_threshold = 5,
-                                          is_data_normalised = FALSE) {
-  # Validate parameters
-  start_timepoint <- match.arg(start_timepoint)
+objective_fun <- function(data, stretch, shift, overlapping_percent, maximize = TRUE) {
+  # Define objective function factor
+  factor <- ifelse(maximize, 1, -1)
 
-  # Preprocess data
-  processed_data <- preprocess_data(
-    input_df = input_df,
-    initial_rescale = initial_rescale,
-    accession_data_to_transform = accession_data_to_transform,
-    accession_data_ref = accession_data_ref,
-    start_timepoint = start_timepoint,
-    expression_value_threshold = expression_value_threshold,
-    is_data_normalised = is_data_normalised
+  tryCatch(
+    {
+      # Apply registration
+      all_data_reg <- apply_registration(data, stretch, shift)
+
+      # Check if overlapping condition is upheld
+      if (calc_overlapping_percent(all_data_reg) < overlapping_percent) stop()
+
+      # Calculate loglik
+      loglik_combined <- factor * calc_loglik_H1(all_data_reg)
+      return(loglik_combined)
+    },
+    error = function(error_message) {
+      loglik_combined <- -factor * 999
+      return(loglik_combined)
+    }
   )
-
-  all_data_df <- processed_data$all_data_df
-  to_shift_df <- processed_data$to_shift_df
-  time_to_add <- processed_data$time_to_add
-
-  # Calculate the best registration
-  best_registration_list <- get_best_stretch_and_shift_simplified(
-    to_shift_df,
-    all_data_df,
-    stretches,
-    shifts,
-    do_rescale,
-    min_num_overlapping_points,
-    maintain_min_num_overlapping_points,
-    accession_data_to_transform,
-    accession_data_ref,
-    time_to_add
-  )
-
-  registered_BIC <- best_registration_list$model_comparison_dt$registered.BIC
-  separate_BIC <- best_registration_list$model_comparison_dt$separate.BIC
-  BIC_diff <- registered_BIC - separate_BIC
-
-  return(BIC_diff)
 }
 
-#' Calculate boundary box for Simulated Annealing
+#' Calculate limits of the search space for Simulated Annealing
 #'
 #' @noRd
-get_boundary_box <- function(input_df,
-                             stretches_bound = NA,
-                             shifts_bound = NA,
-                             accession_data_to_transform,
-                             accession_data_ref,
-                             min_num_overlapping_points,
-                             maintain_min_num_overlapping_points = FALSE,
-                             expression_value_threshold) {
-  # Validate parameters
-  are_bounds_defined <- !any(c(any(is.na(stretches_bound)), any(is.na(shifts_bound))))
+get_search_space_limits <- function(data, overlapping_percent = 0.5) {
+  # Suppress "no visible binding for global variable" note
+  accession <- NULL
+  timepoint <- NULL
 
-  # Initial stretch value
-  stretch_init <- get_approximate_stretch(
-    input_df = input_df,
-    accession_data_to_transform = accession_data_to_transform,
-    accession_data_ref = accession_data_ref
-  )
+  # Initial stretch limits
+  stretch_init <- get_approximate_stretch(data)
+  stretch_lower <- 0.5 * stretch_init
+  stretch_upper <- 1.5 * stretch_init
 
-  # User defined boundaries
-  if (are_bounds_defined) {
-    # Stretch limits
-    cli::cli_alert_info("Using user-defined stretches and shifts as boundaries")
+  # Extract time point ranges
+  timepoints_ref <- unique(data[accession == "ref", timepoint])
+  timepoints_query <- unique(data[accession == "query", timepoint])
 
-    if (length(stretches_bound) < 2) {
-      bound_factor <- 0.5
-      stretches_bound <- c(stretches_bound - bound_factor, stretches_bound + bound_factor)
-    }
+  # Calculate time point ranges
+  range_ref <- diff(range(timepoints_ref))
+  range_query <- diff(range(timepoints_query))
+  range_query_max_stretch <- stretch_upper * range_query
 
-    stretch_lower <- min(stretches_bound)
-    stretch_upper <- max(stretches_bound)
+  # Calculate minimum and maximum timepoints in which the curves overlap
+  min_timepoint <- min(timepoints_ref) + overlapping_percent * range_ref - range_query_max_stretch
+  max_timepoint <- max(timepoints_ref) - overlapping_percent * range_ref + range_query_max_stretch
 
-    if (length(shifts_bound) < 2) {
-      bound_factor <- 0.5
-      shifts_bound <- c(shifts_bound - bound_factor, shifts_bound + bound_factor)
-    }
+  # Calculate shift limits
+  shift_lower <- min_timepoint - min(timepoints_query)
+  shift_upper <- (max_timepoint - range_query_max_stretch) - min(timepoints_query)
 
-    shift_lower <- min(shifts_bound)
-    shift_upper <- max(shifts_bound)
-
-    shift_init <- mean(c(shift_lower, shift_upper))
-  }
-
-  # Computed boundaries
-  if (!are_bounds_defined) {
-    # Initial stretch limits
-    cli::cli_alert_info("Using computed stretches and shifts boundaries")
-    stretch_lower <- 0.5 * stretch_init
-    stretch_upper <- 1.5 * ceiling(stretch_init)
-
-    # Define stretch and shift limits given min_num_overlapping_points
-    all_data_df <- data.table::as.data.table(input_df)
-
-    mean_df <- get_mean_data(
-      exp = all_data_df,
-      expression_value_threshold = expression_value_threshold,
-      accession_data_to_transform = accession_data_to_transform,
-      is_data_normalised = FALSE
-    )
-
-    # Create candidate shifts limits data frame
-    bound_limits <- seq(round(stretch_lower, 1), round(stretch_upper, 1), 0.1) %>%
-      purrr::map(
-        function(stretch) {
-          extreme_shifts <- tryCatch(
-            {
-              shifts <- get_extreme_shifts_for_all(
-                mean_df,
-                stretch_factor = stretch,
-                min_num_overlapping_points = min_num_overlapping_points,
-                shift_extreme = 1000,
-                accession_data_to_transform = accession_data_to_transform,
-                accession_data_ref = accession_data_ref
-              ) %>%
-                suppressWarnings()
-
-              df <- data.frame(
-                stretch = stretch,
-                shift_lower = shifts[[1]],
-                shift_upper = shifts[[2]]
-              )
-
-              return(df)
-            },
-            error = function(error_message) {
-              df <- data.frame(
-                stretch = stretch,
-                shift_lower = NA,
-                shift_upper = NA
-              )
-
-              return(df)
-            }
-          )
-        }
-      ) %>%
-      purrr::reduce(dplyr::bind_rows) %>%
-      dplyr::filter(
-        !is.na(shift_lower),
-        !is.na(shift_upper),
-        !is.infinite(shift_lower),
-        !is.infinite(shift_upper)
-      )
-
-    if (!maintain_min_num_overlapping_points) {
-      # Consider biggest box possible
-      shift_upper <- max(bound_limits$shift_upper)
-      shift_lower <- min(bound_limits$shift_lower)
-    } else {
-      # Filter bound_limits df only for those shift values between Q25% - Q75%
-      quan <- unname(stats::quantile(bound_limits$shift_upper))
-
-      bound_limits <- bound_limits %>%
-        dplyr::filter(
-          shift_upper <= quan[4],
-          shift_upper >= quan[2]
-        )
-
-      # Restrict shift limits to make sure min_num_overlapping_points condition is maintained
-      shift_upper <- min(bound_limits$shift_upper)
-      shift_lower <- max(bound_limits$shift_lower)
-    }
-
-    # Define stretch limits
-    stretch_lower <- min(bound_limits$stretch)
-    stretch_upper <- max(bound_limits$stretch)
-  }
-
-  # Correct initial stretch value
-  if (stretch_init < stretch_lower | stretch_init > stretch_upper) {
-    stretch_init <- mean(c(stretch_lower, stretch_upper))
-  }
-
-  # Correct initial shift value
+  # Calculate initial shift value (zero if possible)
   shift_init <- 0
   if (shift_init < shift_lower | shift_init > shift_upper) {
     shift_init <- mean(c(shift_lower, shift_upper))
@@ -261,94 +105,93 @@ get_boundary_box <- function(input_df,
   return(results_list)
 }
 
-#' Optimise registration parameters with Simulated Annealing for single gene
+#' Calculate limits of the search space for Simulated Annealing from provided registration parameters
+#'
 #' @noRd
-#' @importFrom rlang .data
-optimise_registration_params_single_gene <- function(input_df,
-                                                     initial_guess = NA,
-                                                     stretches_bound = NA,
-                                                     shifts_bound = NA,
-                                                     initial_rescale = FALSE,
-                                                     do_rescale = TRUE,
-                                                     min_num_overlapping_points = 4,
-                                                     maintain_min_num_overlapping_points = FALSE,
-                                                     expression_value_threshold = 5,
-                                                     accession_data_to_transform,
-                                                     accession_data_ref,
-                                                     start_timepoint,
-                                                     is_data_normalised,
-                                                     num_iterations = 60) {
-  # Function to optimise
-  BIC_diff <- function(x) {
-    stretch <- x[1]
-    shift <- x[2]
+get_search_space_limits_from_params <- function(stretches, shifts) {
+  # Initial stretch limits
+  stretch_lower <- min(stretches)
+  stretch_upper <- max(stretches)
+  stretch_init <- mean(stretches)
 
-    tryCatch(
-      {
-        BIC <- get_BIC_from_registering_data(
-          input_df = input_df,
-          stretches = stretch,
-          shifts = shift,
-          min_num_overlapping_points = min_num_overlapping_points,
-          maintain_min_num_overlapping_points = FALSE,
-          expression_value_threshold = expression_value_threshold,
-          initial_rescale = initial_rescale,
-          do_rescale = do_rescale,
-          accession_data_to_transform = accession_data_to_transform,
-          accession_data_ref = accession_data_ref,
-          start_timepoint = start_timepoint,
-          is_data_normalised = is_data_normalised
-        ) %>%
-          suppressMessages() %>%
-          suppressWarnings()
+  # Calculate shift limits
+  shift_lower <- min(shifts)
+  shift_upper <- max(shifts)
 
-        return(BIC)
-      },
-      error = function(error_message) {
-        BIC <- 999
-
-        return(BIC)
-      }
-    )
+  # Calculate initial shift value (zero if possible)
+  shift_init <- 0
+  if (shift_init < shift_lower | shift_init > shift_upper) {
+    shift_init <- mean(c(shift_lower, shift_upper))
   }
 
-  # Calculate boundary box and initial guess
-  boundary_box <- get_boundary_box(
-    input_df,
-    stretches_bound,
-    shifts_bound,
-    accession_data_to_transform,
-    accession_data_ref,
-    min_num_overlapping_points,
-    maintain_min_num_overlapping_points,
-    expression_value_threshold
+  # Results object
+  results_list <- list(
+    stretch_init = stretch_init,
+    stretch_lower = stretch_lower,
+    stretch_upper = stretch_upper,
+    shift_init = shift_init,
+    shift_lower = shift_lower,
+    shift_upper = shift_upper
   )
 
-  if (any(is.na(initial_guess))) {
-    stretch_init <- boundary_box$stretch_init
-    shift_init <- boundary_box$shift_init
+  return(results_list)
+}
+
+#' Calculate overlapping percentage between reference and query data time point ranges
+#'
+#' @noRd
+calc_overlapping_percent <- function(data) {
+  # Suppress "no visible binding for global variable" note
+  accession <- NULL
+  timepoint <- NULL
+
+  # Extract time point ranges
+  range_ref <- range(unique(data[accession == "ref", timepoint]))
+  range_query <- range(unique(data[accession == "query", timepoint]))
+
+  if (all(range_ref[2] >= range_query[2], range_ref[1] <= range_query[1])) {
+    # Query is fully contained on reference
+    overlapping_percent <- 1
   } else {
-    stretch_init <- initial_guess[1]
-    shift_init <- initial_guess[2]
+    # Calculate overlapping percent over reference
+    overlap <- min(c(range_ref[2], range_query[2])) - max(c(range_ref[1], range_query[1]))
+    overlapping_percent <- overlap / diff(range_ref)
   }
 
-  stretch_lower <- boundary_box$stretch_lower
-  stretch_upper <- boundary_box$stretch_upper
-  shift_lower <- boundary_box$shift_lower
-  shift_upper <- boundary_box$shift_upper
+  return(overlapping_percent)
+}
+
+#' Optimise stretch and shift using Simulated Annealing
+#'
+#' @noRd
+optimise_using_sa <- function(data,
+                              optimisation_config,
+                              overlapping_percent,
+                              space_lims) {
+  # Parse initial and limit parameters
+  stretch_init <- space_lims$stretch_init
+  shift_init <- space_lims$shift_init
+  stretch_lower <- space_lims$stretch_lower
+  stretch_upper <- space_lims$stretch_upper
+  shift_lower <- space_lims$shift_lower
+  shift_upper <- space_lims$shift_upper
+
+  # Optimisation parameters
+  # TODO: Explore best default
+  num_iterations <- optimisation_config$num_iterations
+  num_inner_loop_iter <- optimisation_config$num_fun_evals
 
   # Calculate cooling schedule
   t0 <- 1000
   t_min <- 0.1
   r_cooling <- (t_min / t0)^(1 / num_iterations)
-  # TODO: Explore best default
-  num_inner_loop_iter <- 100
 
   # Perform SA using {optimization}
-  optim_sa_res <- optimization::optim_sa(
-    fun = BIC_diff,
+  optimised_params <- optimization::optim_sa(
+    fun = function(x) objective_fun(data, x[1], x[2], overlapping_percent),
+    maximization = TRUE,
     start = c(stretch_init, shift_init),
-    trace = TRUE,
+    trace = FALSE,
     lower = c(stretch_lower, shift_lower),
     upper = c(stretch_upper, shift_upper),
     control = list(
@@ -361,271 +204,147 @@ optimise_registration_params_single_gene <- function(input_df,
     )
   )
 
-  # Parse results
-  locus_name <- unique(input_df$locus_name)
-
-  result_df <- data.frame(
-    gene = locus_name,
-    stretch = round(optim_sa_res$par[1], 3),
-    shift = round(optim_sa_res$par[2], 3),
-    BIC_diff = optim_sa_res$function_value,
-    is_registered = optim_sa_res$function_value < 0
-  )
-
-  trace_df <- optim_sa_res$trace %>%
-    as.data.frame() %>%
-    dplyr::mutate(
-      gene = locus_name,
-      is_registered = .data$loss < 0
-    ) %>%
-    dplyr::filter(.data$is_registered) %>%
-    dplyr::select(
-      .data$gene,
-      stretch = .data$x_1,
-      shift = .data$x_2,
-      BIC_diff = .data$loss,
-      .data$is_registered
-    ) %>%
-    dplyr::distinct()
-
   # Results object
-  results_list <- list(
-    optimum_params_df = result_df,
-    candidate_params_df = trace_df
+  params_list <- list(
+    stretch = optimised_params$par[1],
+    shift = optimised_params$par[2],
+    loglik_score = optimised_params$function_value
   )
 
-  return(results_list)
+  return(params_list)
 }
 
-#' Optimise registration parameters with Simulated Annealing
-#'
-#' @param input_df Input data frame containing all replicates of gene expression in each genotype at each time point.
-#' @param genes List of genes to optimise.
-#' @param stretches_bound Optional candidate registration stretch factors define search space, otherwise automatic.
-#' @param shifts_bound Optional candidate registration shift values to define search space, otherwise automatic.
-#' @param initial_rescale Scaling gene expression prior to registration if \code{TRUE}.
-#' @param do_rescale Scaling gene expression using only overlapping time points points during registration.
-#' @param min_num_overlapping_points Number of minimum overlapping time points. Shifts will be only considered if it leaves at least these many overlapping points after applying the registration function.
-#' @param maintain_min_num_overlapping_points Whether to automatically calculate extreme (minimum and maximum) values of \code{shifts} to maintain specified \code{min_num_overlapping_points} condition. By default, \code{FALSE}.
-#' @param accession_data_to_transform Accession name of data which will be transformed.
-#' @param accession_data_ref Accession name of reference data.
-#' @param start_timepoint Time points to be added in both reference data and data to transform after shifting and stretching. Can be either \code{"reference"} (the default), \code{"transform"}, or \code{"zero"}.
-#' @param expression_value_threshold Expression value threshold. Remove expressions if maximum is less than the threshold. If \code{NULL} keep all data.
-#' @param is_data_normalised \code{TRUE} if dataset has been normalised prior to registration process.
-#' @param num_iterations Maximum number of iterations of the algorithm. Default is 100.
-#'
-#' @return List of optimum registration parameters, \code{optimum_params_df}, and other candidate registration parameters, \code{candidate_params_df} for all genes.
-#' @export
-#' @importFrom rlang .data
-optimise_registration_params <- function(input_df,
-                                         genes = NULL,
-                                         stretches_bound = NA,
-                                         shifts_bound = NA,
-                                         initial_rescale = FALSE,
-                                         do_rescale = TRUE,
-                                         min_num_overlapping_points = 4,
-                                         maintain_min_num_overlapping_points = FALSE,
-                                         accession_data_to_transform,
-                                         accession_data_ref,
-                                         start_timepoint = c("reference", "transform", "zero"),
-                                         expression_value_threshold = 5,
-                                         is_data_normalised = FALSE,
-                                         num_iterations = 60) {
-  # Validate genes
-  if (is.null(genes)) {
-    genes <- unique(input_df$locus_name)
-  }
 
-  # Apply optimise_registration_params_single_gene() over all genes
-  raw_results <- cli::cli_progress_along(
-    genes,
-    format = "{cli::pb_spin} Optimising registration parameters for genes ({cli::pb_current}/{cli::pb_total})",
-    format_done = "{cli::col_green(cli::symbol$tick)} Optimising registration parameters for genes ({cli::pb_total}/{cli::pb_total}) {cli::col_white(paste0('[', cli::pb_elapsed, ']'))}",
-    clear = FALSE
-  ) %>%
-    purrr::map(
-      function(gene) {
-        curr_df <- input_df %>%
-          dplyr::filter(.data$locus_name == genes[[gene]])
-
-        opt_res <- optimise_registration_params_single_gene(
-          input_df = curr_df,
-          stretches_bound = stretches_bound,
-          shifts_bound = shifts_bound,
-          initial_guess = NA,
-          initial_rescale,
-          do_rescale,
-          min_num_overlapping_points,
-          maintain_min_num_overlapping_points,
-          expression_value_threshold,
-          accession_data_to_transform,
-          accession_data_ref,
-          start_timepoint,
-          is_data_normalised,
-          num_iterations
-        )
-
-        return(opt_res)
-      }
-    )
-
-  # Parse raw results
-  optimum_params_reduced <- raw_results %>%
-    purrr::map(~ purrr::pluck(.x, "optimum_params_df")) %>%
-    purrr::reduce(dplyr::bind_rows)
-
-  candidate_params_reduced <- raw_results %>%
-    purrr::map(~ purrr::pluck(.x, "candidate_params_df")) %>%
-    purrr::reduce(dplyr::bind_rows)
-
-  # Results object
-  results_list <- list(
-    optimum_params_df = optimum_params_reduced,
-    candidate_params_df = candidate_params_reduced
-  )
-
-  return(results_list)
-}
-
-#' Calculate best shifts and stretches for each gene, also calculate BIC under registration or non-registration
+#' Optimise stretch and shift using Nelder-Mead
 #'
 #' @noRd
-get_best_stretch_and_shift_after_optimisation <- function(to_shift_df,
-                                                          all_data_df,
-                                                          optimised_parameters,
-                                                          do_rescale,
-                                                          min_num_overlapping_points,
-                                                          accession_data_to_transform,
-                                                          accession_data_ref,
-                                                          time_to_add) {
-  # Suppress "no visible binding for global variable" note
-  is_best <- NULL
-  gene <- NULL
-  delta.BIC <- NULL
-  locus_name <- NULL
+optimise_using_nm <- function(data,
+                              optimisation_config,
+                              overlapping_percent,
+                              space_lims) {
+  # Parse initial and limit parameters
+  stretch_init <- space_lims$stretch_init
+  shift_init <- space_lims$shift_init
+  stretch_lower <- space_lims$stretch_lower
+  stretch_upper <- space_lims$stretch_upper
+  shift_lower <- space_lims$shift_lower
+  shift_upper <- space_lims$shift_upper
 
-  # Warning to make sure users have correct accession data
-  if (!(accession_data_to_transform %in% all_data_df$accession & accession_data_ref %in% all_data_df$accession)) {
-    stop("get_best_stretch_and_shift(): data accessions should have been converted to correct accession.")
-  }
-
-  params_df <- optimised_parameters$optimum_params_df
-  gene_list <- params_df$gene
-
-  all_all_shifts <- rep(list(0), length(gene_list))
-  all_best_shifts <- rep(list(0), length(gene_list))
-  all_model_comparison_dt <- rep(list(0), length(gene_list))
-
-  for (i in 1:length(gene_list)) {
-    gene <- gene_list[i]
-    gene_data_df <- all_data_df[locus_name == gene]
-    cli::cli_h2("Analysing models for gene = {gene}")
-
-    # Calculate all the shift scores given this stretch. Score is mean(dist^2), over overlapping points if do_rescale=T, is rescaled by the mean FOR THE OVERLAPPING POINTS. (but not by the SD.)
-    all_shifts <- calculate_all_best_shifts(
-      mean_df = to_shift_df[locus_name == gene],
-      stretch_factor = params_df[params_df$gene == gene, ]$stretch,
-      shifts = params_df[params_df$gene == gene, ]$shift,
-      do_rescale,
-      min_num_overlapping_points,
-      maintain_min_num_overlapping_points = FALSE,
-      accession_data_to_transform,
-      accession_data_ref
-    )
-
-    # Ensure no duplicated rows
-    all_shifts <- unique(all_shifts)
-
-    # Cut down to single best shift for each gene (Alex's original logic)
-    best_shifts <- all_shifts
-    best_shifts$is_best <- TRUE
-
-    if (nrow(best_shifts) != length(unique(gene_data_df$locus_name))) {
-      stop("get_best_stretch_and_shift(): got non-unique best shifts in best_shifts")
-    }
-
-    # Calculate the BIC for the best shifts found with this stretch.compared to treating the gene's expression separately in data to transform and reference data
-    model_comparison_dt <- calculate_all_model_comparison_stats(
-      gene_data_df,
-      best_shifts,
-      accession_data_to_transform,
-      accession_data_ref,
-      time_to_add
-    )
-
-    # Add info on the stretch and shift applied
-    model_comparison_dt <- merge(
-      model_comparison_dt,
-      best_shifts[, c("gene", "stretch", "shift", "score"), ],
-      by = "gene"
-    )
-
-    # Record the results for the current stretch factor
-    all_all_shifts[[i]] <- all_shifts
-    all_best_shifts[[i]] <- best_shifts
-    all_model_comparison_dt[[i]] <- model_comparison_dt
-    cli::cli_alert_success("Finished analysing models for gene = {gene}")
-  }
-
-  # all the combinations of shift, and stretch tried
-  all_shifts <- do.call("rbind", all_all_shifts)
-  # the best shifts for each stretch
-  all_best_shifts <- do.call("rbind", all_best_shifts)
-  # model comparison of best shift (for each gene) to separate models
-  all_model_comparison_dt <- do.call("rbind", all_model_comparison_dt)
-
-  # Correct -Inf BIC values to -9999 so that delta.BIC is not Inf or NaN
-  all_model_comparison_dt <- all_model_comparison_dt %>%
-    dplyr::rowwise() %>%
-    dplyr::mutate(
-      dplyr::across(
-        .cols = c(.data$registered.BIC, .data$separate.BIC),
-        .fns = function(x) {
-          if (!is.finite(x)) {
-            x <- 9999 * sign(x)
-          }
-          return(x)
-        }
-      )
-    ) %>%
-    dplyr::ungroup() %>%
-    data.table::as.data.table()
-
-  # Get the best registration applied (best stretch, and best shift) for each gene, picking by BIC alone will favour fewer overlapping (considered) data points.
-  # Pick best in order to maximise how much better register.BIC is than separate.BIC
-  all_model_comparison_dt$delta.BIC <- all_model_comparison_dt$registered.BIC - all_model_comparison_dt$separate.BIC
-
-  # Best is one for which registered.BIC is as small as possible compared to separate.BIC
-  all_model_comparison_dt[, is_best := (delta.BIC == min(delta.BIC)), by = .(gene)]
-  best_model_comparison.dt <- all_model_comparison_dt[all_model_comparison_dt$is_best == TRUE]
-
-  # If there is a tie for best registration for a gene, keep the first one as the best
-  if (any(duplicated(best_model_comparison.dt$gene))) {
-    message("found ", sum(duplicated(best_model_comparison.dt$gene)), " tied optimal registrations. Removing duplicates")
-    best_model_comparison.dt <- best_model_comparison.dt[!(duplicated(best_model_comparison.dt$gene)), ]
-  }
-
-  best_model_comparison.dt$BIC_registered_is_better <- best_model_comparison.dt$delta.BIC < 0
-  best_model_comparison.dt$delta.BIC <- NULL
-
-  # Cut down best shifts to the best shift for the best stretch only
-  best_shifts <- merge(
-    all_best_shifts,
-    best_model_comparison.dt[, c("gene", "stretch", "shift")],
-    by = c("gene", "stretch", "shift")
+  # Define data as it object required by optim::sa()
+  fmsfundata <- structure(
+    list(data = data),
+    class = "optimbase.functionargs"
   )
 
-  # There should be only 1 best shift for each gene, stop if it is not the case
-  if (!(nrow(best_shifts) == length(unique(to_shift_df$locus_name)))) {
-    stop()
+  loglik_score_nm <- function(x = NULL, index = NULL, fmsfundata = NULL) {
+    stretch <- x[1]
+    shift <- x[2]
+
+    f <- objective_fun(
+      fmsfundata$data,
+      stretch,
+      shift,
+      overlapping_percent,
+      maximize = FALSE
+    )
+
+    varargout <- list(
+      f = f,
+      index = index,
+      this = list(costfargument = fmsfundata)
+    )
+
+    return(varargout)
   }
+
+  # Optimisation parameters
+  # TODO: Explore best default
+  num_iterations <- optimisation_config$num_iterations
+  max_fun_evals <- optimisation_config$num_fun_evals
+
+  # Start process optimisation
+  x0 <- matrix(c(stretch_init, shift_init), ncol = 1)
+  nm <- neldermead::neldermead()
+  nm <- neldermead::neldermead.set(nm, "numberofvariables", 2)
+  nm <- neldermead::neldermead.set(nm, "function", loglik_score_nm)
+  nm <- neldermead::neldermead.set(nm, "x0", x0)
+  nm <- neldermead::neldermead.set(nm, "costfargument", fmsfundata)
+  nm <- neldermead::neldermead.set(nm, "maxiter", num_iterations)
+  nm <- neldermead::neldermead.set(nm, "maxfunevals", max_fun_evals)
+  nm <- neldermead::neldermead.set(nm, "method", "box")
+  nm <- neldermead::neldermead.set(nm, "storehistory", FALSE)
+  nm <- neldermead::neldermead.set(nm, "boundsmin", c(stretch_lower, shift_lower))
+  nm <- neldermead::neldermead.set(nm, "boundsmax", c(stretch_upper, shift_upper))
+  nm <- neldermead::neldermead.search(this = nm)
+
+  # Parse simplex at optimal point
+  simplex_obj <- unlist(nm$simplexopt)
+  vertices <- nm$simplexopt$nbve
+  simplex_vars <- grep("^x|^fv", names(simplex_obj), value = TRUE)
+
+  optimised_params <- data.table::as.data.table(
+    matrix(simplex_obj[simplex_vars], nrow = vertices)
+  )[vertices, ]
 
   # Results object
-  results_list <- list(
-    "all_shifts" = all_shifts,
-    "best_shifts" = best_shifts,
-    "model_comparison_dt" = best_model_comparison.dt
+  params_list <- list(
+    stretch = optimised_params$V1,
+    shift = optimised_params$V2,
+    loglik_score = -optimised_params$V3
   )
 
-  return(results_list)
+  return(params_list)
 }
+
+#' Optimise stretch and shift using L-BFGS-B
+#'
+#' @noRd
+optimise_using_lbfgsb <- function(data,
+                                  optimisation_config = NULL,
+                                  overlapping_percent,
+                                  space_lims) {
+
+  # Parse initial and limit parameters
+  stretch_init <- space_lims$stretch_init
+  shift_init <- space_lims$shift_init
+  stretch_lower <- space_lims$stretch_lower
+  stretch_upper <- space_lims$stretch_upper
+  shift_lower <- space_lims$shift_lower
+  shift_upper <- space_lims$shift_upper
+
+  loglik_score_lbfgsb <- function(theta, data_input, overlapping_percent) {
+    stretch <- theta[1]
+    shift <- theta[2]
+
+    loglik_score <- objective_fun(
+      data_input,
+      stretch,
+      shift,
+      overlapping_percent,
+      maximize = FALSE
+    )
+
+    return(loglik_score)
+  }
+
+  results <- stats::optim(
+    par = c(stretch_init, shift_init),
+    fn = loglik_score_lbfgsb,
+    data_input = data,
+    overlapping_percent = overlapping_percent,
+    method = "L-BFGS-B",
+    lower = c(stretch_lower, shift_lower),
+    upper = c(stretch_upper, shift_upper)
+  )
+
+  # Results object
+  params_list <- list(
+    stretch = results$par[1],
+    shift = results$par[2],
+    loglik_score = -results$value
+  )
+
+  return(params_list)
+}
+
+

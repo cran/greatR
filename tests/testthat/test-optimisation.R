@@ -1,105 +1,62 @@
-all_data_df <- system.file("extdata/brapa_arabidopsis_all_replicates.csv", package = "greatR") %>%
-  utils::read.csv() %>%
-  dplyr::filter(locus_name %in% c("BRAA05G005370.3C"))
+brapa_sample_data <- data.table::fread(system.file("extdata/brapa_arabidopsis_all_replicates.csv", package = "greatR"))
+reference <- "Ro18"
+query <- "Col0"
+gene_data <- brapa_sample_data[gene_id == "BRAA03G051930.3C"]
+processed_data <- preprocess_data(gene_data, reference, query)
+all_data <- processed_data$all_data
 
-# Pipeline parameters ----
+test_that("get_search_space_limits works", {
+  space_lims <- get_search_space_limits(all_data)
 
-stretches_bound <- c(2.0, 2.05)
-shifts_bound <- c(0.60, 0.65)
-initial_rescale <- FALSE
-do_rescale <- TRUE
-min_num_overlapping_points <- 4
-accession_data_to_transform <- "Col0"
-accession_data_ref <- "Ro18"
-start_timepoint <- "reference"
-expression_value_threshold <- 5
-is_data_normalised <- FALSE
-
-# Test optimisation functions ----
-
-test_that("optimise_registration_params works", {
-  set.seed(123)
-  num_iterations <- 1
-
-  optimised_parameters <- optimise_registration_params(
-    input_df = all_data_df,
-    stretches = stretches_bound,
-    shifts = shifts_bound,
-    initial_rescale = initial_rescale,
-    do_rescale = do_rescale,
-    min_num_overlapping_points = min_num_overlapping_points,
-    accession_data_to_transform = accession_data_to_transform,
-    accession_data_ref = accession_data_ref,
-    start_timepoint = start_timepoint,
-    expression_value_threshold = expression_value_threshold,
-    is_data_normalised = is_data_normalised,
-    num_iterations = num_iterations
-  )
-
-  processed_data <- preprocess_data(
-    input_df = all_data_df,
-    initial_rescale = initial_rescale,
-    accession_data_to_transform = accession_data_to_transform,
-    accession_data_ref = accession_data_ref,
-    start_timepoint = start_timepoint,
-    expression_value_threshold = expression_value_threshold,
-    is_data_normalised = is_data_normalised
-  )
-
-  best_registration_list <- get_best_stretch_and_shift_after_optimisation(
-    processed_data$to_shift_df,
-    processed_data$all_data_df,
-    optimised_parameters,
-    do_rescale,
-    min_num_overlapping_points,
-    accession_data_to_transform,
-    accession_data_ref,
-    processed_data$time_to_add
-  )
-
-  # Expected output for optimise_registration_params()
-  expected_optimum_params_df <- data.frame(
-    stringsAsFactors = FALSE,
-    gene = c("BRAA05G005370.3C"),
-    stretch = c(2.045),
-    shift = c(0.645),
-    BIC_diff = c(-14.0280742834283),
-    is_registered = c(TRUE)
-  )
-  expect_equal(names(optimised_parameters), c("optimum_params_df", "candidate_params_df"))
-  expect_equal(optimised_parameters$optimum_params_df, expected_optimum_params_df)
-  expect_true(optimised_parameters$optimum_params_df$is_registered)
-  expect_equal(nrow(optimised_parameters$candidate_params_df), num_iterations)
-
-  # Expected output for get_best_stretch_and_shift_after_optimisation()
-  expect_equal(names(best_registration_list), c("all_shifts", "best_shifts", "model_comparison_dt"))
-  expect_equal(ncol(best_registration_list$all_shifts), 8)
-  expect_equal(ncol(best_registration_list$best_shifts), 9)
-  expect_equal(ncol(best_registration_list$model_comparison_dt), 8)
+  # Expected outputs
+  expect_equal(names(space_lims), c("stretch_init", "stretch_lower", "stretch_upper", "shift_init", "shift_lower", "shift_upper"))
+  expect_equal(space_lims$stretch_init, 2.667, tolerance = 1e-2)
+  expect_equal(space_lims$stretch_lower, 1.333, tolerance = 1e-2)
+  expect_equal(space_lims$stretch_upper, 4, tolerance = 1e-2)
+  expect_equal(space_lims$shift_init, 0, tolerance = 1e-2)
+  expect_equal(space_lims$shift_lower, -20, tolerance = 1e-2)
+  expect_equal(space_lims$shift_upper, 16, tolerance = 1e-2)
+  expect_no_error(get_search_space_limits(all_data))
+  expect_error(get_search_space_limits(gene_data))
 })
 
-test_that("get_boundary_box works", {
-  boundary_box_manual <- get_boundary_box(
-    input_df = all_data_df,
-    stretches_bound = stretches_bound,
-    shifts_bound = shifts_bound,
-    accession_data_to_transform = accession_data_to_transform,
-    accession_data_ref = accession_data_ref,
-    min_num_overlapping_points = min_num_overlapping_points,
-    expression_value_threshold = expression_value_threshold
-  )
+test_that("get_search_space_limits_from_params works", {
+  stretches <- c(1, 2, 3)
+  shifts <- c(-4, 4)
+  space_lims <- get_search_space_limits_from_params(stretches = stretches, shifts = shifts)
 
-  boundary_box_auto <- get_boundary_box(
-    input_df = all_data_df,
-    stretches_bound = NA,
-    shifts_bound = NA,
-    accession_data_to_transform = accession_data_to_transform,
-    accession_data_ref = accession_data_ref,
-    min_num_overlapping_points = min_num_overlapping_points,
-    expression_value_threshold = expression_value_threshold
-  )
+  # Expected outputs
+  expect_equal(names(space_lims), c("stretch_init", "stretch_lower", "stretch_upper", "shift_init", "shift_lower", "shift_upper"))
+  expect_equal(space_lims$stretch_init, mean(stretches), tolerance = 1e-2)
+  expect_equal(space_lims$stretch_lower, min(stretches), tolerance = 1e-2)
+  expect_equal(space_lims$stretch_upper, max(stretches), tolerance = 1e-2)
+  expect_equal(space_lims$shift_init, 0, tolerance = 1e-2)
+  expect_equal(space_lims$shift_lower, min(shifts), tolerance = 1e-2)
+  expect_equal(space_lims$shift_upper, max(shifts), tolerance = 1e-2)
+})
 
-  # Expected output for get_boundary_box()
-  expect_equal(round(unname(unlist(boundary_box_manual)), 2), c(2.02, 2, 2.05, 0.62, 0.6, 0.65))
-  expect_equal(round(unname(unlist(boundary_box_auto)), 2), c(2.67, 1.3, 4.5, 0, -27, 19.8))
+test_that("calc_overlapping_percent works", {
+  all_data_reg <- apply_registration(all_data, 2.75, 3.6)
+  overlapping_raw <- calc_overlapping_percent(all_data)
+  overlapping_reg <- calc_overlapping_percent(all_data_reg)
+
+  # Expected outputs
+  expect_gte(overlapping_reg, overlapping_raw)
+  expect_equal(overlapping_reg, 1, tolerance = 1e-1)
+})
+
+test_that("objective_fun works", {
+  # Expected outputs
+  expect_equal(objective_fun(all_data, 2.75, 3.6, 0.5), -11.19, tolerance = 1e-2)
+  expect_equal(objective_fun(all_data), -999)
+})
+
+test_that("optimise works", {
+  optimisation_config = list(num_iterations = 1, num_fun_evals = 1)
+  results_sa <- optimise(all_data, optimisation_config = optimisation_config, optimise_fun = optimise_using_sa)
+  results_nm <- optimise(all_data, optimisation_config = optimisation_config, optimise_fun = optimise_using_nm)
+
+  # Expected outputs
+  expect_equal(names(results_sa), c("stretch", "shift", "loglik_score"))
+  expect_equal(names(results_nm), c("stretch", "shift", "loglik_score"))
 })
