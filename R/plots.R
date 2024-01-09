@@ -5,7 +5,7 @@
 #' @param genes_list Optional vector indicating the \code{gene_id} values to be plotted.
 #' @param title Optional plot title.
 #' @param ncol Number of columns in the plot grid. By default this is calculated automatically.
-#'
+#' @param plot_mean_data Whether mean data is displayed or not.
 #' @return Plot of genes of interest after registration process (\code{type = "registered"}) or showing original time points (\code{type = "original"}).
 #'
 #' @export
@@ -13,7 +13,8 @@ plot_registration_results <- function(results,
                                       type = c("registered", "original"),
                                       genes_list = NULL,
                                       title = NULL,
-                                      ncol = NULL) {
+                                      ncol = NULL,
+                                      plot_mean_data = FALSE) {
   # Suppress "no visible binding for global variable" note
   gene_id <- NULL
   accession <- NULL
@@ -28,6 +29,7 @@ plot_registration_results <- function(results,
   model_comparison <- results$model_comparison
   reference <- attr(data, "ref")
   query <- attr(data, "query")
+  scaling_method <- attr(data, "scaling_method")
 
   # Select genes to be plotted
   genes <- unique(data[, gene_id])
@@ -72,14 +74,16 @@ plot_registration_results <- function(results,
       # fill = accession
     ) +
     ggplot2::geom_point() +
-    # ggplot2::stat_summary(fun = mean, geom = "line") +
+    {
+      if (plot_mean_data) ggplot2::stat_summary(fun = mean, geom = "line")
+    } +
     ggplot2::facet_wrap(~gene_facet, scales = "free", ncol = ncol) +
     ggplot2::scale_x_continuous(breaks = scales::pretty_breaks()) +
     ggplot2::theme_bw() +
     ggplot2::labs(
       title = title,
       x = x_lab,
-      y = "Scaled expression"
+      y = ifelse(scaling_method == "none", "Expression", "Scaled expression")
     )
 
   # Add model curve layers
@@ -140,6 +144,7 @@ parse_gene_facets <- function(model_comparison, type) {
   registered <- NULL
   stretch <- NULL
   shift <- NULL
+  BIC_diff <- NULL
 
   if (type == "registered") {
     gene_facets <- model_comparison[, .(
@@ -148,7 +153,7 @@ parse_gene_facets <- function(model_comparison, type) {
         gene_id, " - ", ifelse(registered, "REG", "NO_REG"),
         ifelse(
           registered,
-          paste0("\n", "stretch: ", round(stretch, 2), ", shift: ", round(shift, 2)),
+          paste0("\n", "BIC score: ", round(BIC_diff, 2), ", stretch: ", round(stretch, 2), ", shift: ", round(shift, 2)),
           ""
         )
       )
@@ -195,7 +200,7 @@ get_H1_model_curves <- function(data, model_comparison) {
         data <- unique(data[data$gene_id == gene][, .(gene_id, timepoint_reg)])
         data <- data.table::data.table(
           gene_id = gene,
-          timepoint_reg = seq(min(data$timepoint_reg), max(data$timepoint_reg), 1)
+          timepoint_reg = seq(min(data$timepoint_reg), max(data$timepoint_reg), length.out = 25)
         )
         data[, .(gene_id, timepoint_reg, expression_value = stats::predict(fits[gene][[1]], newdata = data))]
       }
@@ -253,7 +258,7 @@ get_H2_model_curves <- function(data, model_comparison, reference, query) {
         data <- unique(data_ref[data_ref$gene_id == gene][, .(gene_id, timepoint_reg)])
         data <- data.table::data.table(
           gene_id = gene,
-          timepoint_reg = seq(min(data$timepoint_reg), max(data$timepoint_reg), 1)
+          timepoint_reg = seq(min(data$timepoint_reg), max(data$timepoint_reg), length.out = 25)
         )
         data[, .(gene_id, timepoint_reg, expression_value = stats::predict(fits_ref[gene][[1]], newdata = data))]
       }
@@ -267,7 +272,7 @@ get_H2_model_curves <- function(data, model_comparison, reference, query) {
         data <- unique(data_query[data_query$gene_id == gene][, .(gene_id, timepoint_reg)])
         data <- data.table::data.table(
           gene_id = gene,
-          timepoint_reg = seq(min(data$timepoint_reg), max(data$timepoint_reg), 1)
+          timepoint_reg = seq(min(data$timepoint_reg), max(data$timepoint_reg), length.out = 25)
         )
         data[, .(gene_id, timepoint_reg, expression_value = stats::predict(fits_query[gene][[1]], newdata = data))]
       }

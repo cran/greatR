@@ -8,11 +8,13 @@
 #' @param shifts Candidate registration shift values to apply to query data, only required if \code{optimise_registration_parameters = FALSE}.
 #' @param reference Accession name of reference data.
 #' @param query Accession name of query data.
-#' @param scaling_method Scaling method applied to data prior to registration process. Either \code{scale} (default), or \code{normalise}.
-#' @param overlapping_percent Number of minimum overlapping time points. Shifts will be only considered if it leaves at least these many overlapping points after applying the registration function.
-#' @param optimise_registration_parameters Whether to optimise registration parameters with Simulated Annealing. By default, \code{TRUE}.
+#' @param scaling_method Scaling method applied to data prior to registration process. Either \code{none} (default), \code{z-score}, or \code{min-max}.
+#' @param overlapping_percent Minimum percentage of overlapping time points on the reference data. Shifts will be only considered if it leaves at least this percentage of overlapping time points after applying the registration function.
+#' @param optimise_registration_parameters Whether to optimise registration parameters. By default, \code{TRUE}.
 #' @param optimisation_method Optimisation method to use. Either \code{"nm"} for Nelder-Mead (default), \code{"lbfgsb"} for L-BFGS-B, or \code{"sa"} for Simulated Annealing.
 #' @param optimisation_config Optional list with arguments to override the default optimisation configuration.
+#' @param exp_sd Optional experimental standard deviation on the expression replicates.
+#' @param num_cores Number of cores to use if the user wants to register genes asynchronously (in parallel) in the background on the same machine. By default, \code{NA}, the registration will be run without parallelisation.
 #'
 #' @return This function returns a list of data frames, containing:
 #'
@@ -39,11 +41,13 @@ register <- function(input,
                      shifts = NA,
                      reference,
                      query,
-                     scaling_method = c("scale", "normalise"),
-                     overlapping_percent = 0.5,
+                     scaling_method = c("none", "z-score", "min-max"),
+                     overlapping_percent = 50,
                      optimise_registration_parameters = TRUE,
                      optimisation_method = c("nm", "lbfgsb", "sa"),
-                     optimisation_config = NULL) {
+                     optimisation_config = NULL,
+                     exp_sd = NA,
+                     num_cores = NA) {
   # Suppress "no visible binding for global variable" note
   gene_id <- NULL
   accession <- NULL
@@ -52,6 +56,52 @@ register <- function(input,
   timepoint_id <- NULL
   expression_value <- NULL
   replicate <- NULL
+
+  # Aux iterative registration functions
+  register_single_gene_with_optimisation <- function(gene_index) {
+    # Filter single gene data
+    gene_data <- all_data[all_data$gene_id == gene_id_list[gene_index]]
+
+    # Calculate BIC for Hypothesis 2
+    loglik_separate <- calc_loglik_H2(gene_data)
+
+    # Register for Hypothesis 1
+    if (optimisation_method == "nm") {
+      # Perform multiple optimisation rounds for Nelder-Mead
+      results_round1 <- register_with_optimisation(gene_data, stretches, shifts, loglik_separate, overlapping_percent, optimisation_config, optimise_fun)
+
+      # Perform the second round
+      stretches <- results_round1$model_comparison$stretch
+      shifts <- results_round1$model_comparison$shift
+      results_round2 <- register_with_optimisation(gene_data, stretches, shifts, loglik_separate, overlapping_percent, optimisation_config, optimise_fun)
+
+      # Perform the third round
+      stretches <- results_round2$model_comparison$stretch
+      shifts <- results_round2$model_comparison$shift
+      results <- register_with_optimisation(gene_data, stretches, shifts, loglik_separate, overlapping_percent, optimisation_config, optimise_fun)
+    } else {
+      # Perform optimisation with other optimisation methods
+      results <- register_with_optimisation(gene_data, stretches, shifts, loglik_separate, overlapping_percent, optimisation_config, optimise_fun)
+    }
+
+    return(results)
+  }
+
+  register_single_gene_manually <- function(gene_index) {
+    # Filter single gene data
+    gene_data <- all_data[all_data$gene_id == gene_id_list[gene_index]]
+
+    # Calculate BIC for Hypothesis 2
+    loglik_separate <- calc_loglik_H2(gene_data)
+
+    # Explore search space
+    best_params <- explore_manual_search_space(gene_data, stretches, shifts, loglik_separate)
+
+    # Register for Hypothesis 1
+    results <- register_manually(gene_data, best_params$stretch, best_params$shift, loglik_separate)
+
+    return(results)
+  }
 
   # Validate input data
   cli::cli_h1("Validating input data")
@@ -71,10 +121,9 @@ register <- function(input,
   )
 
   # Preprocess data
-  processed_data <- preprocess_data(input, reference, query, scaling_method)
-  all_data <- processed_data$all_data
+  overlapping_percent <- overlapping_percent / 100
+  all_data <- preprocess_data(input, reference, query, exp_sd, scaling_method)
   gene_id_list <- unique(all_data$gene_id)
-  cli::cli_alert_info("Will process {length(gene_id_list)} gene{?s}.")
 
   # Begin registration logic
   if (optimise_registration_parameters) {
@@ -105,26 +154,26 @@ register <- function(input,
     validate_params(stretches, shifts, "optimisation")
 
     # Run optimisation
-    results <- lapply(
-      cli::cli_progress_along(
-        x = gene_id_list,
-        format = "{cli::pb_spin} Optimising registration parameters for genes ({cli::pb_current}/{cli::pb_total}) [{cli::pb_elapsed_clock}]",
-        format_done = "{cli::col_green(cli::symbol$tick)} Optimising registration parameters for genes ({cli::pb_total}/{cli::pb_total}) {cli::col_white(paste0('[', cli::pb_elapsed, ']'))}",
-        clear = FALSE
-      ),
-      function(gene_index) {
-        # Filter single gene data
-        gene_data <- all_data[all_data$gene_id == gene_id_list[gene_index]]
-
-        # Calculate BIC for Hypothesis 2
-        loglik_separate <- calc_loglik_H2(gene_data)
-
-        # Register for Hypothesis 1
-        results <- register_with_optimisation(gene_data, stretches, shifts, loglik_separate, overlapping_percent, optimisation_config, optimise_fun)
-
-        return(results)
-      }
-    )
+    if (is.na(num_cores)) {
+      results <- lapply(
+        cli::cli_progress_along(
+          x = gene_id_list,
+          format = "{cli::pb_spin} Optimising registration parameters for genes ({cli::pb_current}/{cli::pb_total}) [{cli::pb_elapsed_clock}]",
+          format_done = "{cli::col_green(cli::symbol$tick)} Optimising registration parameters for genes ({cli::pb_total}/{cli::pb_total}) {cli::col_white(paste0('[', cli::pb_elapsed, ']'))}",
+          clear = FALSE
+        ),
+        register_single_gene_with_optimisation
+      )
+    } else {
+      cli::cli_alert_info("Optimising registration parameters for {length(gene_id_list)} genes (timing not available).")
+      future::plan(future::multisession, workers = num_cores)
+      results <- furrr::future_map(
+        seq_along(gene_id_list),
+        register_single_gene_with_optimisation,
+        .progress = TRUE
+      )
+      future::plan(future::sequential)
+    }
   } else {
     cli::cli_h1("Starting manual registration")
 
@@ -132,44 +181,49 @@ register <- function(input,
     validate_params(stretches, shifts, "manual")
 
     # Apply manual registration
-    results <- lapply(
-      cli::cli_progress_along(
-        x = gene_id_list,
-        format = "{cli::pb_spin} Applying registration for genes ({cli::pb_current}/{cli::pb_total}) [{cli::pb_elapsed_clock}]",
-        format_done = "{cli::col_green(cli::symbol$tick)} Applying registration for genes ({cli::pb_total}/{cli::pb_total}) {cli::col_white(paste0('[', cli::pb_elapsed, ']'))}",
-        clear = FALSE
-      ),
-      function(gene_index) {
-        # Filter single gene data
-        gene_data <- all_data[all_data$gene_id == gene_id_list[gene_index]]
-
-        # Calculate BIC for Hypothesis 2
-        loglik_separate <- calc_loglik_H2(gene_data)
-
-        # Explore search space
-        best_params <- explore_manual_search_space(gene_data, stretches, shifts, loglik_separate)
-
-        # Register for Hypothesis 1
-        results <- register_manually(gene_data, best_params$stretch, best_params$shift, loglik_separate)
-
-        return(results)
-      }
-    )
+    if (is.na(num_cores)) {
+      results <- lapply(
+        cli::cli_progress_along(
+          x = gene_id_list,
+          format = "{cli::pb_spin} Applying registration for genes ({cli::pb_current}/{cli::pb_total}) [{cli::pb_elapsed_clock}]",
+          format_done = "{cli::col_green(cli::symbol$tick)} Applying registration for genes ({cli::pb_total}/{cli::pb_total}) {cli::col_white(paste0('[', cli::pb_elapsed, ']'))}",
+          clear = FALSE
+        ),
+        register_single_gene_manually
+      )
+    } else {
+      cli::cli_alert_info("Applying registration for {length(gene_id_list)} genes (timing not available).")
+      future::plan(future::multisession, workers = num_cores)
+      results <- furrr::future_map(
+        seq_along(gene_id_list),
+        register_single_gene_manually,
+        .progress = TRUE
+      )
+      future::plan(future::sequential)
+    }
   }
 
   # Aggregate results
   all_data_reg <- data.table::rbindlist(lapply(results, function(x) x$data_reg))
   model_comparison <- data.table::rbindlist(lapply(results, function(x) x$model_comparison))
 
+  # Drop variance columns
+  all_data[, c("var") := NULL]
+  all_data_reg[, c("var") := NULL]
+
   # Left join registered time points
   setnames(all_data_reg, "timepoint", "timepoint_reg")
   all_data[, timepoint_id := order(timepoint, expression_value), by = .(gene_id, accession, replicate)]
   all_data_reg[, timepoint_id := order(timepoint_reg, expression_value), by = .(gene_id, accession, replicate)]
+
   all_data <- merge(
     all_data,
     all_data_reg,
     by = c("gene_id", "accession", "expression_value", "timepoint_id", "replicate")
   )
+
+  # Arrange data by timepoint
+  all_data <- all_data[order(gene_id, accession, timepoint, replicate)]
 
   # Restore original query and reference accession names
   all_data[, c("time_delta", "timepoint_id") := NULL]
@@ -178,6 +232,9 @@ register <- function(input,
   # Add accession values as data attributes
   data.table::setattr(all_data, "ref", reference)
   data.table::setattr(all_data, "query", query)
+
+  # Add scaling as a data attribute
+  data.table::setattr(all_data, "scaling_method", scaling_method)
 
   # Results object
   results_list <- list(
@@ -258,7 +315,7 @@ register_manually <- function(data,
 #' @noRd
 explore_manual_search_space <- function(data, stretches, shifts, loglik_separate) {
   # Suppress "no visible binding for global variable" note
-  BIC_combined <- NULL
+  BIC_diff <- NULL
 
   # Explore search space
   params_results <- lapply(
@@ -276,7 +333,7 @@ explore_manual_search_space <- function(data, stretches, shifts, loglik_separate
 
   # Find best registration parameters
   model_comparison <- data.table::rbindlist(do.call(Map, c(f = rbind, params_results)))
-  best_params <- model_comparison[BIC_combined == min(model_comparison$BIC_combined), ][, .SD[1]]
+  best_params <- model_comparison[BIC_diff == min(model_comparison$BIC_diff), ][, .SD[1]]
 
   return(best_params)
 }

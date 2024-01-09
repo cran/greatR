@@ -1,4 +1,4 @@
-## ---- include = FALSE---------------------------------------------------------
+## ----include = FALSE----------------------------------------------------------
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>"
@@ -29,7 +29,8 @@ b_rapa_data[, .SD[1:6], by = accession][, .(gene_id, accession, timepoint, expre
 #  registration_results <- register(
 #    b_rapa_data,
 #    reference = "Ro18",
-#    query = "Col0"
+#    query = "Col0",
+#    scaling_method = "z-score"
 #  )
 #  #> ── Validating input data ────────────────────────────────────────────────────────
 #  #> ℹ Will process 10 genes.
@@ -37,14 +38,12 @@ b_rapa_data[, .SD[1:6], by = accession][, .(gene_id, accession, timepoint, expre
 #  #> ── Starting registration with optimisation ──────────────────────────────────────
 #  #> ℹ Using Nelder-Mead method.
 #  #> ℹ Using computed stretches and shifts search space limits.
-#  #> ✔ Optimising registration parameters for genes (10/10) [2.3s]
+#  #> ✔ Optimising registration parameters for genes (10/10) [6.7s]
 
 ## ----register-data, message=FALSE, warning=FALSE, include=FALSE---------------
 # Load a data frame from the sample data
 registration_results <- system.file("extdata/brapa_arabidopsis_registration.rds", package = "greatR") |>
   readRDS()
-
-registration_results$model_comparison <- registration_results$model_comparison[, .(gene_id, stretch, shift, BIC_separate, BIC_combined, registered)]
 
 ## ----get-model-summary-data, warning=FALSE------------------------------------
 registration_results$model_comparison |>

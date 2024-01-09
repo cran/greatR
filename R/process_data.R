@@ -2,11 +2,11 @@
 #'
 #' \code{preprocess_data()} is a function that:
 #' \item{Calculates \code{time_delta}.}
-#' \item{Gets \code{mean_data}.}
+#' \item{Calculates expression \code{var} values for each timepoint.}
 #' \item{Scales data via \code{\link{scale_data}}.}
 #'
 #' @noRd
-preprocess_data <- function(input, reference, query, scaling_method = c("scale", "normalise")) {
+preprocess_data <- function(input, reference, query, exp_sd = NA, scaling_method = c("none", "z-score", "min-max")) {
   # Suppress "no visible binding for global variable" note
   gene_id <- NULL
   accession <- NULL
@@ -23,25 +23,48 @@ preprocess_data <- function(input, reference, query, scaling_method = c("scale",
   # Factor query and reference
   all_data[, accession := factor(accession, levels = c(reference, query), labels = c("ref", "query"))]
 
+  # Filter genes that are missing one accession
+  all_data <- filter_incomplete_accession_pairs(all_data)
+
   # Filter genes that do not change expression over time (sd == 0)
   all_data <- filter_unchanged_expressions(all_data)
+
+  cli::cli_alert_info("Will process {length(unique(all_data$gene_id))} gene{?s}.")
 
   # Calculate time delta for each accession
   all_data[, time_delta := timepoint - min(timepoint), by = .(gene_id, accession)]
 
-  # Get mean data
-  mean_data <- data.table::copy(all_data)
-  mean_data <- unique(mean_data[, .(expression_value = mean(expression_value)), by = .(gene_id, accession, timepoint, time_delta)])
+  # Calculate expression variance
+  all_data <- calc_variance(all_data, exp_sd)
 
   # Scale data
-  scaled_data <- scale_data(mean_data, all_data, scaling_method)
+  scaled_data <- scale_data(all_data, scaling_method)
 
-  # Results object
-  results_list <- list(
-    all_data = scaled_data$all_data
-  )
+  return(scaled_data)
+}
 
-  return(results_list)
+#' Filter genes that are missing one accession
+#'
+#' \code{filter_incomplete_accession_pairs()} is a function to filter out genes that are missing one accession.
+#'
+#' @param all_data Input data including all replicates.
+#'
+#' @noRd
+filter_incomplete_accession_pairs <- function(all_data) {
+  # Suppress "no visible binding for global variable" note
+  gene_id <- NULL
+  count <- NULL
+
+  # Detect genes with only one accession
+  accession_counts <- unique(all_data, by = c("gene_id", "accession"))[, .(count = .N), by = .(gene_id)]
+  discarded_genes <- accession_counts[accession_counts$count == 1]$gene_id
+
+  n_genes <- length(discarded_genes)
+  if (n_genes > 0) {
+    cli::cli_alert_warning("{n_genes} gene{?s} only {?has/have} data with one accession, therefore {?it/they} will be discarded.")
+  }
+
+  return(all_data[!gene_id %in% discarded_genes])
 }
 
 #' Filter genes that do not change over time
@@ -74,12 +97,11 @@ filter_unchanged_expressions <- function(all_data) {
 #'
 #' \code{scale_all_rep_data()} is a function to scale both the mean expression data and original data including all replicates.
 #'
-#' @param mean_data Input data containing mean of each time point.
 #' @param all_data Input data including all replicates.
-#' @param scaling_method Scaling method applied to data prior to registration process. Either \code{scale} (default), or \code{normalise}.
+#' @param scaling_method Scaling method applied to data prior to registration process. Either \code{none} (default), \code{z-score}, or \code{min-max}.
 #'
 #' @noRd
-scale_data <- function(mean_data, all_data, scaling_method = c("scale", "normalise")) {
+scale_data <- function(all_data, scaling_method = c("none", "z-score", "min-max")) {
   # Validate parameters
   scaling_method <- match.arg(scaling_method)
 
@@ -89,53 +111,29 @@ scale_data <- function(mean_data, all_data, scaling_method = c("scale", "normali
   expression_value <- NULL
   scaled_expression_value <- NULL
 
-  if (scaling_method == "scale") {
-    # Scale mean data
-    mean_data[, scaled_expression_value := scale(expression_value, scale = TRUE, center = FALSE), by = .(gene_id, accession)]
-
-    # Summary statistics to use for the rescaling replicates data
-    gene_expression_stats <- unique(
-      mean_data[, .(
-        mean_val = mean(expression_value),
-        sd_val = stats::sd(expression_value)
-      ), by = .(gene_id, accession)]
-    )
-
-    # Left join gene_expression_stats to all_data
-    all_data <- merge(
-      all_data,
-      gene_expression_stats,
-      by = c("gene_id", "accession")
-    )
-
-    # Scale replicates data
-    all_data$expression_value <- all_data$expression_value / all_data$sd_val
-    all_data[, c("mean_val", "sd_val") := NULL]
-  } else if (scaling_method == "normalise") {
-    # Summary statistics to use for the rescaling replicates data
-    gene_expression_stats <- mean_data[, .(
-       min_expression_value = min(expression_value),
-       max_expression_value = max(expression_value)
-     ),
-     by = .(gene_id, accession)
+  if (scaling_method == "z-score") {
+    # Calculate mean and standard deviation of expression in all_data by accession
+    all_data[,
+      c("mean_val", "sd_val") := .(mean(expression_value), stats::sd(expression_value)),
+      by = .(gene_id, accession)
     ]
 
-    # Left join gene_expression_stats to all_data
-    all_data <- merge(
-      all_data,
-      gene_expression_stats,
-      by = c("gene_id", "accession")
-    )
+    # Scale replicates data
+    all_data$expression_value <- (all_data$expression_value - all_data$mean_val) / all_data$sd_val
+    all_data$var <- pmax(all_data$var / (all_data$sd_val)^2, 0.75^2)
+    all_data[, c("mean_val", "sd_val") := NULL]
+  } else if (scaling_method == "min-max") {
+    # Calculate minimum and maximum of expression in all_data by accession
+    all_data[,
+      c("min_val", "max_val") := .(min(expression_value), max(expression_value)),
+      by = .(gene_id, accession)
+    ]
 
     # Scale replicates data
-    all_data$expression_value <- (all_data$expression_value - all_data$min_expression_value) / (all_data$max_expression_value - all_data$min_expression_value)
-    all_data[, c("min_expression_value", "max_expression_value") := NULL]
+    all_data$expression_value <- (all_data$expression_value - all_data$min_val) / (all_data$max_val - all_data$min_val)
+    all_data$var <- all_data$var / (all_data$max_val - all_data$min_val)^2
+    all_data[, c("min_val", "max_val") := NULL]
   }
 
-  # Results object
-  results_list <- list(
-    all_data = all_data
-  )
-
-  return(results_list)
+  return(all_data)
 }

@@ -1,4 +1,4 @@
-## ---- include = FALSE---------------------------------------------------------
+## ----include = FALSE----------------------------------------------------------
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>"
@@ -32,15 +32,17 @@ registration_results <- register(
   gene_BRAA03G023790.3C_data,
   reference = "Ro18",
   query = "Col0",
+  scaling_method = "z-score",
   stretches = 2.6,
   shifts = 4,
   optimise_registration_parameters = FALSE
 )
 #> ── Validating input data ───────────────────────────────────────────────────────
 #> ℹ Will process 1 gene.
+#> ℹ Using estimated standard deviation, as no `exp_sd` was provided.
 #>
 #> ── Starting manual registration ────────────────────────────────────────────────
-#> ✔ Applying registration for genes (1/1) [29ms]
+#> ✔ Applying registration for genes (1/1) [34ms]
 
 ## ----get-model-summary-data, warning=FALSE------------------------------------
 registration_results$model_comparison |>
@@ -51,13 +53,15 @@ registration_results$model_comparison |>
 #    b_rapa_data,
 #    reference = "Ro18",
 #    query = "Col0",
+#    scaling_method = "z-score",
 #    stretches = seq(1, 3, 0.1),
 #    shifts = seq(0, 4, 0.1),
 #    optimise_registration_parameters = FALSE
 #  )
 #  #> ── Validating input data ───────────────────────────────────────────────────────
 #  #> ℹ Will process 10 genes.
+#  #> ℹ Using estimated standard deviation, as no `exp_sd` was provided.
 #  #>
 #  #> ── Starting manual registration ────────────────────────────────────────────────
-#  #> ✔ Applying registration for genes (10/10) [15.8s]
+#  #> ✔ Applying registration for genes (10/10) [15.5s]
 

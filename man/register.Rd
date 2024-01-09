@@ -10,11 +10,13 @@ register(
   shifts = NA,
   reference,
   query,
-  scaling_method = c("scale", "normalise"),
-  overlapping_percent = 0.5,
+  scaling_method = c("none", "z-score", "min-max"),
+  overlapping_percent = 50,
   optimise_registration_parameters = TRUE,
   optimisation_method = c("nm", "lbfgsb", "sa"),
-  optimisation_config = NULL
+  optimisation_config = NULL,
+  exp_sd = NA,
+  num_cores = NA
 )
 }
 \arguments{
@@ -28,15 +30,19 @@ register(
 
 \item{query}{Accession name of query data.}
 
-\item{scaling_method}{Scaling method applied to data prior to registration process. Either \code{scale} (default), or \code{normalise}.}
+\item{scaling_method}{Scaling method applied to data prior to registration process. Either \code{none} (default), \code{z-score}, or \code{min-max}.}
 
-\item{overlapping_percent}{Number of minimum overlapping time points. Shifts will be only considered if it leaves at least these many overlapping points after applying the registration function.}
+\item{overlapping_percent}{Minimum percentage of overlapping time points on the reference data. Shifts will be only considered if it leaves at least this percentage of overlapping time points after applying the registration function.}
 
-\item{optimise_registration_parameters}{Whether to optimise registration parameters with Simulated Annealing. By default, \code{TRUE}.}
+\item{optimise_registration_parameters}{Whether to optimise registration parameters. By default, \code{TRUE}.}
 
 \item{optimisation_method}{Optimisation method to use. Either \code{"nm"} for Nelder-Mead (default), \code{"lbfgsb"} for L-BFGS-B, or \code{"sa"} for Simulated Annealing.}
 
 \item{optimisation_config}{Optional list with arguments to override the default optimisation configuration.}
+
+\item{exp_sd}{Optional experimental standard deviation on the expression replicates.}
+
+\item{num_cores}{Number of cores to use if the user wants to register genes asynchronously (in parallel) in the background on the same machine. By default, \code{NA}, the registration will be run without parallelisation.}
 }
 \value{
 This function returns a list of data frames, containing:
