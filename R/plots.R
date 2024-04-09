@@ -1,20 +1,40 @@
-#' Plot gene of interest after registration
+#' Visualise registration results
 #'
-#' @param results Registration results, output of the \code{\link{register}} registration process.
-#' @param type Type of plot, determines whether to use "registered" or "original" time points. By default, "registered".
+#' @param x Input object.
+#'  - For [plot.res_greatR()]: registration results, output of the [register()] registration process.
+#'  - For [plot.summary.res_greatR()]: registration results summary, output of [summary()].
+#'  - For [plot.dist_greatR()]: pairwise distances between reference and query time points, output of [calculate_distance()].
+#' @param type Type of plot.
+#'  - For both [plot.res_greatR()] and  [plot.dist_greatR()]: whether to use registration "result" (default) or "original" time points.
+#'  - For [plot.summary.res_greatR()]: whether to show "all" genes (default) or only "registered" ones.
+#' @param type_dist Type of marginal distribution. Can be either "histogram" (default), or "density".
 #' @param genes_list Optional vector indicating the \code{gene_id} values to be plotted.
-#' @param title Optional plot title.
+#' @param show_rep_mean Whether to show \code{replicate} mean values.
+#' @param match_timepoints If \code{TRUE}, will match query time points to reference time points.
 #' @param ncol Number of columns in the plot grid. By default this is calculated automatically.
-#' @param plot_mean_data Whether mean data is displayed or not.
-#' @return Plot of genes of interest after registration process (\code{type = "registered"}) or showing original time points (\code{type = "original"}).
+#' @param bins Number of bins to use when \code{type_dist} = "histogram". By default, 30.
+#' @param alpha Optional opacity of the points in the scatterplot.
+#' @param scatterplot_size Vector \code{c(width, height)} specifying the ratio of width and height of the scatterplot with respect to stretch and shift distribution plots.
+#' @param title Optional plot title.
+#' @param ... Arguments to be passed to methods (ignored).
 #'
+#' @name plot
+#' @return
+#'  - For [plot.res_greatR()]: plot of genes of interest after registration process (\code{type = "result"}) or showing original time points (\code{type = "original"}).
+#'  - For [plot.dist_greatR()]: distance heatmap of gene expression profiles over time between reference and query.
+#'  - For [plot.summary.res_greatR()]: TODO.
+NULL
+# > NULL
+
+#' @rdname plot
 #' @export
-plot_registration_results <- function(results,
-                                      type = c("registered", "original"),
-                                      genes_list = NULL,
-                                      title = NULL,
-                                      ncol = NULL,
-                                      plot_mean_data = FALSE) {
+plot.res_greatR <- function(x,
+                            type = c("result", "original"),
+                            genes_list = NULL,
+                            show_rep_mean = FALSE,
+                            ncol = NULL,
+                            title = NULL,
+                            ...) {
   # Suppress "no visible binding for global variable" note
   gene_id <- NULL
   accession <- NULL
@@ -25,11 +45,11 @@ plot_registration_results <- function(results,
   type <- match.arg(type)
 
   # Parse results
-  data <- results$data
-  model_comparison <- results$model_comparison
+  data <- x$data
+  model_comparison <- x$model_comparison
   reference <- attr(data, "ref")
   query <- attr(data, "query")
-  scaling_method <- attr(data, "scaling_method")
+  scaling_method <- x$fun_args$scaling_method
 
   # Select genes to be plotted
   genes <- unique(data[, gene_id])
@@ -57,7 +77,7 @@ plot_registration_results <- function(results,
   data <- data[gene_facets, on = "gene_id"]
 
   # Plot labels
-  if (type == "registered") {
+  if (type == "result") {
     timepoint_var <- "timepoint_reg"
     x_lab <- "Registered time"
   } else {
@@ -71,26 +91,26 @@ plot_registration_results <- function(results,
       x = !!ggplot2::sym(timepoint_var),
       y = expression_value,
       color = accession
-      # fill = accession
     ) +
     ggplot2::geom_point() +
     {
-      if (plot_mean_data) ggplot2::stat_summary(fun = mean, geom = "line")
+      if (show_rep_mean) ggplot2::stat_summary(fun = mean, geom = "line")
     } +
     ggplot2::facet_wrap(~gene_facet, scales = "free", ncol = ncol) +
     ggplot2::scale_x_continuous(breaks = scales::pretty_breaks()) +
-    ggplot2::theme_bw() +
+    theme_greatR() +
     ggplot2::labs(
       title = title,
       x = x_lab,
-      y = ifelse(scaling_method == "none", "Expression", "Scaled expression")
+      y = ifelse(scaling_method == "none", "Expression", "Scaled expression"),
+      color = NULL
     )
 
   # Add model curve layers
-  if (type == "registered") {
-    # Count registered and unregistered genes
+  if (type == "result") {
+    # Count registered and non-registered genes
     registered_count <- length(model_comparison[model_comparison$registered, gene_id])
-    unregistered_count <- length(model_comparison[!model_comparison$registered, gene_id])
+    non_registered_count <- length(model_comparison[!model_comparison$registered, gene_id])
 
     # Get curves for H1
     if (registered_count > 0) {
@@ -98,13 +118,13 @@ plot_registration_results <- function(results,
       preds_H1 <- merge(preds_H1, gene_facets, by = "gene_id")
     }
     # Get curves for H2
-    if (unregistered_count > 0) {
+    if (non_registered_count > 0) {
       preds_H2 <- get_H2_model_curves(data, model_comparison, reference, query)
       preds_H2 <- merge(preds_H2, gene_facets, by = "gene_id")
     }
 
     # Bind predictions
-    if (unregistered_count == 0) {
+    if (non_registered_count == 0) {
       preds <- preds_H1
     } else if (registered_count == 0) {
       preds <- preds_H2
@@ -129,7 +149,10 @@ plot_registration_results <- function(results,
   gg_registered <- gg_registered +
     ggplot2::scale_color_manual(
       breaks = c(reference, query),
-      values = scales::hue_pal()(2)
+      values = greatR_palettes$disc
+    ) +
+    ggplot2::guides(
+      color = ggplot2::guide_legend(override.aes = list(linetype = NULL))
     )
 
   return(gg_registered)
@@ -146,14 +169,14 @@ parse_gene_facets <- function(model_comparison, type) {
   shift <- NULL
   BIC_diff <- NULL
 
-  if (type == "registered") {
+  if (type == "result") {
     gene_facets <- model_comparison[, .(
       gene_id,
       gene_facet = paste0(
-        gene_id, " - ", ifelse(registered, "REG", "NO_REG"),
+        gene_id, " - ", ifelse(registered, "REG", "NON-REG"),
         ifelse(
           registered,
-          paste0("\n", "BIC score: ", round(BIC_diff, 2), ", stretch: ", round(stretch, 2), ", shift: ", round(shift, 2)),
+          paste0("\n", "BIC diff: ", round(BIC_diff, 2), ", stretch: ", round(stretch, 2), ", shift: ", round(shift, 2)),
           ""
         )
       )
@@ -221,7 +244,7 @@ get_H2_model_curves <- function(data, model_comparison, reference, query) {
   accession <- NULL
   timepoint_reg <- NULL
 
-  # Get unregistered genes only
+  # Get non-registered genes only
   genes <- unique(model_comparison[!model_comparison$registered, gene_id])
 
   # Get reference and query data
@@ -288,27 +311,13 @@ get_H2_model_curves <- function(data, model_comparison, reference, query) {
   return(preds)
 }
 
-#' Visualise distances between samples from different time points
-#'
-#' \code{plot_heatmap()} is a function that allows users to plot distances
-#' between samples from different time points to investigate the similarity of
-#' progression of gene expression states between species before or after
-#' registration.
-#'
-#' @param results Results containing distances between two different reference and query data, output of \code{\link{calculate_distance}}.
-#' @param type Type of plot, determines whether to use "registered" or "original" time points. By default, "registered".
-#' @param match_timepoints If \code{TRUE}, will match query time points to reference time points.
-#' @param title Optional plot title.
-#' @param axis_fontsize Font size of X and Y axes labels.
-#'
-#' @return Distance heatmap of gene expression profiles over time between two different species.
-#'
+#' @rdname plot
 #' @export
-plot_heatmap <- function(results,
-                         type = c("registered", "original"),
-                         match_timepoints = FALSE,
-                         title = NULL,
-                         axis_fontsize = NULL) {
+plot.dist_greatR <- function(x,
+                             type = c("result", "original"),
+                             match_timepoints = TRUE,
+                             title = NULL,
+                             ...) {
   # Suppress "no visible binding for global variable" note
   timepoint_ref <- NULL
   timepoint_query <- NULL
@@ -316,10 +325,10 @@ plot_heatmap <- function(results,
 
   # Validate parameters
   type <- match.arg(type)
-  if (type == "registered") {
-    data <- results$registered
+  if (type == "result") {
+    data <- x$result
   } else {
-    data <- results$original
+    data <- x$original
   }
 
   # Retrieve accession values from results
@@ -327,7 +336,7 @@ plot_heatmap <- function(results,
   query <- attr(data, "query")
 
   # Synchronise time points
-  if (match_timepoints) {
+  if (all(match_timepoints, type == "result")) {
     equal_timepoints <- intersect(data$timepoint_ref, data$timepoint_query)
     data <- data[timepoint_query %in% equal_timepoints & timepoint_ref %in% equal_timepoints]
   }
@@ -340,22 +349,20 @@ plot_heatmap <- function(results,
       fill = log(distance)
     ) +
     ggplot2::geom_tile() +
-    ggplot2::theme_bw() +
+    theme_greatR() +
     ggplot2::theme(
-      axis.text.x = ggplot2::element_text(size = axis_fontsize),
-      axis.text.y = ggplot2::element_text(size = axis_fontsize),
-      panel.border = ggplot2::element_blank(),
       legend.position = "top",
       legend.justification = "right",
-      legend.margin = ggplot2::margin(0, 0, 0, 0),
-      legend.box.margin = ggplot2::margin(0, 0, -10, -10),
+      legend.margin = ggplot2::margin(0, 0, -5, 0),
       legend.title = ggplot2::element_text(size = 10),
       legend.key.height = ggplot2::unit(5, "pt")
     ) +
     ggplot2::guides(
       fill = ggplot2::guide_colorbar(label.position = "top")
     ) +
-    ggplot2::scale_fill_viridis_c() +
+    ggplot2::scale_fill_gradientn(colors = greatR_palettes$cont) +
+    ggplot2::scale_x_discrete(expand = c(0, 0)) +
+    ggplot2::scale_y_discrete(expand = c(0, 0)) +
     ggplot2::labs(
       title = title,
       x = query,
@@ -363,9 +370,151 @@ plot_heatmap <- function(results,
     )
 
   # Synchronise time points
-  if (match_timepoints) {
+  if (all(match_timepoints, type == "result")) {
     gg_distance <- gg_distance + ggplot2::coord_fixed()
   }
 
   return(gg_distance)
+}
+
+#' @rdname plot
+#' @export
+plot.summary.res_greatR <- function(x,
+                                    type = c("all", "registered"),
+                                    type_dist = c("histogram", "density"),
+                                    genes_list = NULL,
+                                    bins = 30,
+                                    alpha = NA,
+                                    scatterplot_size = c(4, 3),
+                                    title = NULL,
+                                    ...) {
+  # Suppress "no visible binding for global variable" note
+  stretch <- NULL
+  shift <- NULL
+  registered <- NULL
+
+  # Validate parameters
+  type <- match.arg(type)
+  type_dist <- match.arg(type_dist)
+
+  # Parse data
+  x <- x$reg_params
+  if (type == "registered") {
+    x <- x[x$registered, ]
+  }
+  x$registered <- factor(x$registered, levels = c(TRUE, FALSE), labels = c("REG", "NON-REG"))
+
+  # Select genes to be plotted
+  if (any(!is.null(genes_list))) {
+    if (!inherits(genes_list, "character")) {
+      stop(
+        cli::format_error(c(
+          "{.var genes_list} must be a {.cls character} vector.",
+          "x" = "You supplied vectors with {.cls {class(genes_list)}} values."
+        )),
+        call. = FALSE
+      )
+    }
+
+    x <- x[x$gene_id %in% genes_list]
+  }
+
+  # Scatterplot of stretch and shift (center)
+  point_shape <- ifelse(nrow(x) <= 1000, 19, 21)
+  if (is.na(alpha)) {
+    point_alpha <- ifelse(nrow(x) <= 1000, 1, 0.5)
+  } else {
+    point_alpha <- alpha
+  }
+
+  plot_center <- ggplot2::ggplot(x) +
+    ggplot2::aes(
+      x = stretch,
+      y = shift,
+      color = registered
+    ) +
+    ggplot2::geom_point(alpha = point_alpha, shape = point_shape) +
+    ggplot2::scale_color_manual(
+      breaks = c("REG", "NON-REG"),
+      values = greatR_palettes$hist
+    ) +
+    ggplot2::labs(x = "Stretch", y = "Shift", color = NULL) +
+    theme_greatR() +
+    ggplot2::guides(
+      color = ggplot2::guide_legend(override.aes = list(shape = 19, alpha = 1))
+    )
+
+  # Marginal density of stretch (top)
+  plot_top <- ggplot2::ggplot(x) +
+    ggplot2::aes(
+      x = stretch,
+      color = registered
+    ) +
+    ggplot2::scale_y_continuous(n.breaks = 4) +
+    ggplot2::scale_color_manual(
+      breaks = c("REG", "NON-REG"),
+      values = greatR_palettes$hist
+    ) +
+    theme_greatR() +
+    ggplot2::theme(
+      legend.position = "none",
+      axis.title.x = ggplot2::element_blank(),
+      axis.text.x = ggplot2::element_blank(),
+      axis.ticks.x = ggplot2::element_blank()
+    ) +
+    ggplot2::labs(title = title)
+
+  # Marginal density of shift (right)
+  plot_right <- ggplot2::ggplot(x) +
+    ggplot2::aes(
+      x = shift,
+      color = registered
+    ) +
+    ggplot2::coord_flip() +
+    ggplot2::scale_y_continuous(n.breaks = 4) +
+    ggplot2::scale_color_manual(values = greatR_palettes$hist) +
+    theme_greatR() +
+    ggplot2::theme(
+      legend.position = "none",
+      axis.title.y = ggplot2::element_blank(),
+      axis.text.y = ggplot2::element_blank(),
+      axis.ticks.y = ggplot2::element_blank()
+    )
+
+  # Select geom for marginals
+  marginal_hist <- list(
+    ggplot2::geom_histogram(fill = "transparent", position = "identity", bins = bins),
+    ggplot2::labs(y = "Count")
+  )
+
+  marginal_dens <- list(
+    ggplot2::geom_density(),
+    ggplot2::labs(y = "Density")
+  )
+
+  if (type_dist == "histogram") {
+    plot_top <- plot_top + marginal_hist
+    plot_right <- plot_right + marginal_hist
+  } else if (type_dist == "density") {
+    plot_top <- plot_top + marginal_dens
+    plot_right <- plot_right + marginal_dens
+  }
+
+  # Construct patchwork
+  plots_list <- list(
+    plot_top,
+    patchwork::guide_area(),
+    plot_center,
+    plot_right
+  )
+
+  patch <- patchwork::wrap_plots(
+    plots_list,
+    guides = "collect",
+    ncol = 2,
+    heights = c(1, scatterplot_size[2]),
+    widths = c(scatterplot_size[1], 1)
+  )
+
+  return(patch)
 }

@@ -16,34 +16,32 @@ commit](https://img.shields.io/github/last-commit/ruthkr/greatR)](https://github
 
 `greatR` (**G**ene **R**egistration from **E**xpression **a**nd
 **T**ime-courses in **R**) is a tool to register (align) two sets of
-gene expression profiles that users wish to compare. These gene profiles
-data will be referred as the query and the reference data. To match the
-ranges over time between those profiles, the timepoints of the query
-gene expression profiles will be transformed through stretching and
-shifting process. This tool uses a statistical model comparison based on
-a Bayesian approach to evaluate the optimality of the gene expression
-profiles alignment.
+gene expression profiles that users wish to compare.
+
+These gene profiles data will be referred as the **query** and the
+**reference** data. To match the time point ranges between those
+profiles, the time points of the **query** profiles will be transformed
+through a stretching and shifting process. This tool uses a statistical
+model comparison based on a Bayesian approach to evaluate the optimality
+of the gene expression profiles alignment.
 
 ## Package workflow
 
 The flowchart below illustrates the workflow of the package given an
 input data:
 
-<br>
+<img src="man/figures/greatR_workflow.png" width="100%" />
 
-<img src="man/figures/greatR_workflow.png" width="85%" />
-
-<br>
-
-More details on how to use this package are available on function
-documentations and the following vignettes:
+More details on how to use this package are available on [function
+documentations](https://ruthkr.github.io/greatR/reference/index.html)
+and the following vignettes:
 
 1.  [Input data
     requirements](https://ruthkr.github.io/greatR/articles/data-requirement.html)
 2.  [Register
     data](https://ruthkr.github.io/greatR/articles/register-data.html)
-3.  [Visualise registration
-    results](https://ruthkr.github.io/greatR/articles/visualise-results.html)
+3.  [Process registration
+    results](https://ruthkr.github.io/greatR/articles/process-results.html)
 
 ## Installation
 
@@ -74,7 +72,7 @@ library(greatR)
 
 ``` r
 # Load a data frame from the sample data
-b_rapa_data <- system.file("extdata/brapa_arabidopsis_all_replicates.csv", package = "greatR") |>
+b_rapa_data <- system.file("extdata/brapa_arabidopsis_data.csv", package = "greatR") |>
   utils::read.csv()
 
 # Running the registration
@@ -86,11 +84,14 @@ registration_results <- register(
 )
 #> ── Validating input data ────────────────────────────────────────────────────────
 #> ℹ Will process 10 genes.
+#> ℹ Using estimated standard deviation, as no `exp_sd` was provided.
+#> ℹ Using `scaling_method` = "z-score".
 #>
 #> ── Starting registration with optimisation ──────────────────────────────────────
-#> ℹ Using Nelder-Mead method.
+#> ℹ Using L-BFGS-B optimisation method.
 #> ℹ Using computed stretches and shifts search space limits.
-#> ✔ Optimising registration parameters for genes (10/10) [6.7s]
+#> ℹ Using `overlapping_percent` = 50% as a registration criterion.
+#> ✔ Optimising registration parameters for genes (10/10) [2s]
 ```
 
 ## Reference

@@ -27,14 +27,15 @@ calc_loglik <- function(model, data) {
 #'
 #' @param data Input data
 #' @param x Predictor variable, by default \code{timepoint}.
+#' @param y Predictor variable, by default \code{expression_value}.
 #' @param num_spline_params Number of parameters, or degrees of freedom, for each spline fitting. This is used to calculate the number of \code{knots}.
 #' @param degree Degree of the piecewise polynomial, default is 3 for cubic splines.
 #'
 #' @noRd
-fit_spline_model <- function(data, x = "timepoint", num_spline_params = 4, degree = 3) {
+fit_spline_model <- function(data, x = "timepoint", y = "expression_value", num_spline_params = 4, degree = 3) {
   fit_object <- stats::lm(
     stats::as.formula(
-      paste("expression_value ~ splines::bs(", x, ", df = num_spline_params, degree = degree)")
+      paste(y, "~ splines::bs(", x, ", df = num_spline_params, degree = degree)")
     ),
     data = data
   )
@@ -85,9 +86,9 @@ calc_variance <- function(all_data, exp_sd = NA) {
       all_data_reps[, c("var_poisson", "var_range") := NULL]
     }
 
-    # Calculate variance for data with no replicates
+    # Set variance for data with no replicates
     if (nrow(all_data_no_reps) > 0) {
-      all_data_no_reps[, var := diff(range(expression_value)) / 10, by = .(gene_id, accession)]
+      all_data_no_reps[, var := pmax(expression_value / 10, 0.25), by = .(gene_id, accession, timepoint)]
     }
 
     # Combine data

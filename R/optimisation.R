@@ -3,7 +3,7 @@
 #' @param data Input data frame containing all replicates of gene expression for a single genotype at each time point.
 #' @param overlapping_percent Minimum normalised percentage of overlapping time points on the reference data. Shifts will be only considered if it leaves at least this percentage of overlapping time points after applying the registration function.
 #' @param optimisation_config List with arguments to modify the optimisation configuration.
-#' @param optimise_fun Optimisation function to use. Can be \code{optimise_using_nm} or \code{optimise_using_nm}.
+#' @param optimise_fun Optimisation function to use. Can be \code{optimise_using_nm}, \code{optimise_using_lbfgsb}, or \code{optimise_using_sa}.
 #'
 #' @noRd
 optimise <- function(data,
@@ -12,7 +12,6 @@ optimise <- function(data,
                      overlapping_percent = 0.5,
                      optimisation_config,
                      optimise_fun) {
-
   # Calculate boundary box
   space_lims <- get_search_space_limits(data, stretches, shifts, overlapping_percent)
 
@@ -197,9 +196,10 @@ optimise_using_lbfgsb <- function(data,
                                   space_lims) {
   # Parse initial and limit parameters
   stretch_init <- space_lims$stretch_init
-  shift_init <- space_lims$shift_init
   stretch_lower <- space_lims$stretch_lower
   stretch_upper <- space_lims$stretch_upper
+
+  shift_init <- space_lims$shift_init
   shift_lower <- space_lims$shift_lower
   shift_upper <- space_lims$shift_upper
 
